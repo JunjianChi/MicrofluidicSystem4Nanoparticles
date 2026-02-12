@@ -1,264 +1,114 @@
 menu "Custom Configuration"
 
-    choice SENSOR_TYPE
-        prompt "Sensor Type"
-        default MAT_SENSOR
-        help
-            Select the type of sensor being used in the application.
-
-        config INSOLE_SENSOR
-            bool "Insole Sensor"
+    menu "Sensor Configuration"
+        config PRESSURE_SENSOR_ENABLE
+            bool "Enable Pressure Sensor"
+            default y
             help
-                Select this option if you are using an insole sensor.
+                Enable or disable the pressure sensor.
 
-        config MAT_SENSOR
-            bool "Mat Sensor"
+        config TEMPERATURE_SENSOR_ENABLE
+            bool "Enable Temperature Sensor"
+            default y
             help
-                Select this option if you are using a mat sensor.
-    endchoice
-    
-    choice IMU_USAGE                       
-        prompt "IMU Usage"
-        default IMU_DISABLED
-        help
-            Decide whether the firmware should read the external IMU
-            (ICM-45686 over SPI).
-    
-        config IMU_DISABLED
-            bool "Do NOT use IMU"
-    
-        config IMU_ENABLED
-            bool "Use external IMU (ICM-45686)"
-    endchoice 
+                Enable or disable the temperature sensor.
 
-    choice FOOT_SIDE
-        prompt "Foot Side"
-        default FOOT_LEFT
-        help
-            Select whether this board is mounted on the left or right foot.
-            It will be encoded into the data packet as 0x0000 or 0x0001.
-    
-        config FOOT_LEFT
-            bool "Left foot  (0x0000)"
-    
-        config FOOT_RIGHT
-            bool "Right foot (0x0001)"
-    endchoice
-
-    choice MEAS_TYPE
-        prompt "Measure Type"
-        default POT_DIV
-        help
-            Select the type of sensor being used in the application.
-
-        config POT_DIV
-            bool "Potential divider"
+        config FLOW_SENSOR_ENABLE
+            bool "Enable Flow Sensor"
+            default y
             help
-                Select this option if you are using potential divider to take measurement.
+                Enable or disable the flow sensor.
 
-        config CUR_SRC
-            bool "Current source"
+        choice FLOW_SENSOR_PRODUCT
+            prompt "Flow Sensor Product Model"
+            depends on FLOW_SENSOR_ENABLE
+            default FLOW_SENSOR_0600F
             help
-                Select this option if you are using current source to take measurement.
-    endchoice
+                Select the SLF3S flow sensor model.
 
-    choice FRAME_TYPE
-        prompt "Frame Type"
-        default SINGLE_FRAME
-        help
-            Select the type of frame being used in the application.
+            config FLOW_SENSOR_0600F
+                bool "SLF3S-0600F (0-600 µl/min)"
+                help
+                    Select SLF3S-0600F model with 0-600 µl/min range.
+                    Scale factor: 10000
 
-        config SINGLE_FRAME
-            bool "Single Frame"
-            help
-                Select this option if you are using a single frame.
-
-        config DOUBLE_FRAME
-            bool "Double Frame"
-            help
-                Select this option if you are using a double frame.
-    endchoice
-
-    choice DATA_ENCODE
-        prompt "Data Encoding"
-        default DATA_ENCODE_ASCII
-        help
-            Select the encoding format for the data being sent.
-
-        config DATA_ENCODE_ASCII
-            bool "ASCII"
-            help
-                Select this option to encode the data in ASCII format.
-
-        config DATA_ENCODE_RAW
-            bool "RAW"
-            help
-                Select this option to encode the data in RAW format.
-    endchoice
-
-    choice DATA_PACKAGE
-        prompt "Data Package"
-        default DATA_PACKAGE_COLUMN
-        help
-            Select the package format for the data being sent.
-
-        config DATA_PACKAGE_FRAME
-            bool "Frame"
-            help
-                Select this option to package the data in frame format.
-
-        config DATA_PACKAGE_COLUMN
-            bool "Column"
-            help
-                Select this option to package the data in column format.
-    endchoice
-
-    config SENSOR_COL_SIZE
-        int "Sensor Column Size"
-        default 32
-        help
-            Set the number of columns in the sensor matrix.
-
-    config SENSOR_ROW_SIZE
-        int "Sensor Row Size"
-        default 32
-        help
-            Set the number of rows in the sensor matrix.
-
-    menu "ADC Configuration"
-        config ADC_CHANNEL
-            int "ADC Channel"
-            default 0
-            help
-                Set the ADC channel number.
-
-        config ADC_RESOLUTION
-            int "ADC Resolution"
-            default 12
-            help
-                Set the ADC resolution.
-
-        config ADC_AVERAGE_NUM
-            int "ADC Average Number"
-            default 10
-            help
-                Set the number of ADC samples to average.
+            config FLOW_SENSOR_1300F
+                bool "SLF3S-1300F (0-40 ml/min)"
+                help
+                    Select SLF3S-1300F model with 0-40 ml/min range.
+                    Scale factor: 500
+        endchoice
     endmenu
 
-    menu "DAC Configuration"
-        config DAC_CHANNEL0
-            int "DAC Channel0"
-            default 25
+    choice PUMP_DRIVER
+        prompt "Pump Driver Type"
+        default MP_DRIVER
+        help
+            Select the type of pump driver to use for the MP6 pump.
+
+        config LOW_MP_DRIVER
+            bool "Low MP-Driver"
             help
-                Set the DAC0 channel number.
-        config DAC_CHANNEL1
-            int "DAC Channel1"
-            default 26
+                Select this option to use the low MP-driver.
+
+        config HIGH_MP_DRIVER
+            bool "High MP-Driver"
             help
-                Set the DAC1 channel number.
-    endmenu
+                Select this option to use the high MP-driver.
+
+        config MP_DRIVER
+            bool "MP-Driver"
+            help
+                Select this option to use the standard MP-driver.
+    endchoice
+
+    choice COMMUNICATION_TYPE
+        prompt "Communication Method"
+        default COMM_SERIAL
+        help
+            Select the communication method for data transmission.
+
+        config COMM_SERIAL
+            bool "Serial"
+            help
+                Use serial communication.
+
+        config COMM_WIFI
+            bool "WiFi"
+            help
+                Use WiFi communication.
+    endchoice
 
     menu "Pin Configuration"
-        config WR01
-            int "WR01 Pin"
-            default 4
-            help
-                Set the pin number for WR01.
-    
-        config WR02
-            int "WR02 Pin"
-            default 17
-            help
-                Set the pin number for WR02.
-    
-        config A0
-            int "A0 Pin"
-            default 18
-            help
-                Set the pin number for A0.
-    
-        config A1
-            int "A1 Pin"
-            default 19
-            help
-                Set the pin number for A1.
-    
-        config A2
-            int "A2 Pin"
+        config I2C_SDA_PIN
+            int "I2C SDA Pin"
             default 21
             help
-                Set the pin number for A2.
-    
-        config A3
-            int "A3 Pin"
+                Set the pin number for I2C SDA.
+
+        config I2C_SCL_PIN
+            int "I2C SCL Pin"
             default 22
             help
-                Set the pin number for A3.
-    
-        config A4
-            int "A4 Pin"
-            default 23
-            help
-                Set the pin number for A4.
+                Set the pin number for I2C SCL.
 
-        config IA_A0
-            int "IA_A0 Pin"
-            default 12
-            help
-                Set the pin number for IA_A0.
-        
-        config IA_A1
-            int "IA_A1 Pin"
+        config MP_DRIVER_ENABLE_PIN
+            int "MP Driver Enable Pin"
             default 14
             help
-                Set the pin number for IA_A1.
+                Set the pin number for MP driver enable signal.
 
-        config IA_A2
-            int "IA_A2 Pin"
+        config MP_DRIVER_CLOCK_PIN
+            int "MP Driver Clock Pin"
             default 27
             help
-                Set the pin number for IA_A2.
-
-        config IA_CS
-            int "IA_CS Pin"
-            default 15
-            help
-                Set the pin number for IA_CS.
-        
-        config IMU_MISO
-            int "IMU_MISO Pin"
-            default 34
-            help
-                Set the pin number for IMU_MISO.
-
-        config IMU_INT
-            int "IMU_INT Pin"
-            default 35
-            help
-                Set the pin number for IMU_INT.
-
-        config IMU_SCLK
-            int "IMU_SCLK Pin"
-            default 33
-            help
-                Set the pin number for IMU_SCLK.
-        
-        config IMU_MOSI
-            int "IMU_MOSI Pin"
-            default 13
-            help
-                Set the pin number for IMU_MOSI.
-
-        config IMU_CS
-            int "IMU_CS Pin"
-            default 32
-            help
-                Set the pin number for IMU_CS.
-
+                Set the pin number for MP driver clock signal.
     endmenu
 
 
     menu "WiFi Configuration"
+        depends on COMM_WIFI
+
         config WIFI_SSID
             string "WiFi SSID"
             default "admin_test"
