@@ -1,0 +1,15 @@
+# IDE / editor
+.vscode/
+.idea/
+
+# Claude Code
+CLAUDE.md
+.claude/
+
+# ESP-IDF build artifacts
+build/
+sdkconfig.old
+
+# OS files
+.DS_Store
+Thumbs.db
