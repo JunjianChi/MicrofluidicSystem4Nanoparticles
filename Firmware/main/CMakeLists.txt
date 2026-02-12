@@ -1,4 +1,4 @@
-idf_component_register(SRCS "i2c_interface.c"
+idf_component_register(SRCS "mcp4726_dac.c" "i2c_interface.c"
                              "sensor_config.c"
                              "SLF3S_flow_sensor.c"
                              "serial_comm.c"

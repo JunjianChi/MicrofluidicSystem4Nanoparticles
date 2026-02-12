@@ -132,6 +132,9 @@ typedef enum {
 /* Flow Sensor (SLF3S) */
 #define FLOW_SENSOR_I2C_ADDR        0x08    // SLF3S flow sensor address
 
+/* DAC for MP-Driver (MCP4726) */
+#define MP_DRIVER_DAC_I2C_ADDR      0x61    // MCP4726 DAC address
+
 /********************************************************
  * SENSOR SAMPLING CONFIGURATION
  ********************************************************/

@@ -1,9 +1,9 @@
 /********************************************************
  * @file        main.c
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V1.0.0
- * @date        06/02/2026
- * @brief       Main application for microfluidic control system
+ * @version     V2.1.0
+ * @date        12/02/2026
+ * @brief       Main application - DAC test
  *
  * SPDX-License-Identifier: MIT
  ********************************************************/
@@ -14,79 +14,62 @@
 #include "esp_log.h"
 
 #include "i2c_interface.h"
-#include "SLF3S_flow_sensor.h"
+#include "mcp4726_dac.h"
 #include "sensor_config.h"
 
 static const char *TAG = "MAIN";
 
-/* Flow sensor handle */
-static slf3s_handle_t flow_sensor;
+/********************************************************
+ * DAC TEST
+ *
+ * Set a voltage, measure with multimeter on DAC output pin.
+ * Valid range: 0 ~ 5.0V (VDD)
+ * MP-Driver amplitude range: 0.35 ~ 1.3V
+ ********************************************************/
+
+#define TEST_VOLTAGE  0.35f   /* Change this to test (volts) */
 
 void app_main(void)
 {
-    /* Enable debug logging for flow sensor */
-    esp_log_level_set("SLF3S", ESP_LOG_DEBUG);
+    ESP_LOGI(TAG, "=== MCP4726 DAC Test ===");
 
-    ESP_LOGI(TAG, "=== Microfluidic Control System ===");
-    ESP_LOGI(TAG, "Firmware Version: 1.0.0");
-
-    /* Initialize I2C interface */
-    ESP_LOGI(TAG, "Initializing I2C interface...");
+    /* Initialize I2C */
     esp_err_t ret = i2c_interface_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C initialization failed!");
+        ESP_LOGE(TAG, "I2C init failed!");
         return;
     }
 
-    /* Scan I2C bus to detect devices */
-    ESP_LOGI(TAG, "Scanning I2C bus...");
-    uint8_t devices[128];
+    /* Scan I2C bus - verify MCP4726 at 0x61 */
+    uint8_t devices[16];
     uint8_t num_found = 0;
-    i2c_interface_scan(devices, 128, &num_found);
+    i2c_interface_scan(devices, 16, &num_found);
 
-    if (num_found == 0) {
-        ESP_LOGW(TAG, "No I2C devices found! Check your connections.");
-    }
-
-    /* Initialize flow sensor */
-    ESP_LOGI(TAG, "Initializing flow sensor...");
-    ret = slf3s_init(&flow_sensor);
+    /* Initialize DAC */
+    ret = mcp4726_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Flow sensor initialization failed!");
+        ESP_LOGE(TAG, "DAC init failed!");
         return;
     }
 
-    /* Start flow measurement */
-    ESP_LOGI(TAG, "Starting flow measurement...");
-    ret = slf3s_start_measurement(&flow_sensor);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Flow measurement start failed, trying simple mode...");
-        ret = slf3s_start_measurement_simple(&flow_sensor);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Could not start flow measurement!");
-            return;
-        }
-    }
-
-    ESP_LOGI(TAG, "System ready! Waiting for sensor to stabilize...");
-
-    /* Wait for sensor to stabilize after starting measurement */
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    ESP_LOGI(TAG, "Starting to read flow sensor...");
-
-    /* Main loop - read flow sensor */
-    while (1) {
-        float flow_rate = 0.0f;
-
-        ret = slf3s_read_flow(&flow_sensor, &flow_rate);
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Flow rate: %.2f µl/min", flow_rate);
-        } else {
-            ESP_LOGW(TAG, "Failed to read flow sensor: %s", esp_err_to_name(ret));
-        }
-
-        /* Wait before next reading (sensor updates ~1kHz, but we read slower) */
-        vTaskDelay(pdMS_TO_TICKS(100));
+    /* Set DAC output voltage */
+    ret = mcp4726_set_voltage(TEST_VOLTAGE);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DAC set voltage failed!");
+        return;
     }
+
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "  Target voltage: %.3f V", TEST_VOLTAGE);
+    ESP_LOGI(TAG, "  Expected bit:   %d", (int)(TEST_VOLTAGE / 5.0f * 4096));
+    ESP_LOGI(TAG, "  Measure DAC output pin with multimeter.");
+    ESP_LOGI(TAG, "========================================");
+
+    // /* Hold forever */
+    // while (1) {
+    //     vTaskDelay(pdMS_TO_TICKS(5000));
+    //     ESP_LOGI(TAG, "Holding %.3f V ...", TEST_VOLTAGE);
+    // }
 }
