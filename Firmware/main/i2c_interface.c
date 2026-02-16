@@ -59,11 +59,11 @@ esp_err_t i2c_interface_init(void)
 
     i2c_initialized = true;
 
-    ESP_LOGI(TAG, "I2C master initialized successfully");
-    ESP_LOGI(TAG, "  Port: %d", I2C_MASTER_PORT);
-    ESP_LOGI(TAG, "  SDA: GPIO%d", I2C_MASTER_SDA_IO);
-    ESP_LOGI(TAG, "  SCL: GPIO%d", I2C_MASTER_SCL_IO);
-    ESP_LOGI(TAG, "  Frequency: %d Hz", I2C_MASTER_FREQ_HZ);
+    // ESP_LOGI(TAG, "I2C master initialized successfully");
+    // ESP_LOGI(TAG, "  Port: %d", I2C_MASTER_PORT);
+    // ESP_LOGI(TAG, "  SDA: GPIO%d", I2C_MASTER_SDA_IO);
+    // ESP_LOGI(TAG, "  SCL: GPIO%d", I2C_MASTER_SCL_IO);
+    // ESP_LOGI(TAG, "  Frequency: %d Hz", I2C_MASTER_FREQ_HZ);
 
     return ESP_OK;
 }
@@ -82,7 +82,7 @@ esp_err_t i2c_interface_deinit(void)
     }
 
     i2c_initialized = false;
-    ESP_LOGI(TAG, "I2C master deinitialized");
+    // ESP_LOGI(TAG, "I2C master deinitialized");
 
     return ESP_OK;
 }
@@ -226,11 +226,11 @@ esp_err_t i2c_interface_scan(uint8_t *devices, uint8_t max_devices, uint8_t *num
 
     *num_found = 0;
 
-    ESP_LOGI(TAG, "Scanning I2C bus...");
+    // ESP_LOGI(TAG, "Scanning I2C bus...");
 
     for (uint8_t addr = 0x03; addr < 0x78; addr++) {
         if (i2c_interface_probe(addr) == ESP_OK) {
-            ESP_LOGI(TAG, "  Found device at address: 0x%02X", addr);
+            // ESP_LOGI(TAG, "  Found device at address: 0x%02X", addr);
 
             if (*num_found < max_devices) {
                 devices[*num_found] = addr;
@@ -239,7 +239,7 @@ esp_err_t i2c_interface_scan(uint8_t *devices, uint8_t max_devices, uint8_t *num
         }
     }
 
-    ESP_LOGI(TAG, "I2C scan complete. Found %d device(s)", *num_found);
+    // ESP_LOGI(TAG, "I2C scan complete. Found %d device(s)", *num_found);
 
     return ESP_OK;
 }

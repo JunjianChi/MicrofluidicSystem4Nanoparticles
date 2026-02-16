@@ -49,7 +49,7 @@ esp_err_t mcp4726_init(void)
         ESP_LOGE(TAG, "VREF config failed: %s", esp_err_to_name(ret));
         return ret;
     }
-    ESP_LOGI(TAG, "VREF config OK");
+    // ESP_LOGI(TAG, "VREF config OK");
 
     vTaskDelay(pdMS_TO_TICKS(10));
 
@@ -75,9 +75,9 @@ esp_err_t mcp4726_init(void)
         ESP_LOGE(TAG, "DAC zero failed: %s", esp_err_to_name(ret));
         return ret;
     }
-    ESP_LOGI(TAG, "DAC zero OK");
+    // ESP_LOGI(TAG, "DAC zero OK");
 
-    ESP_LOGI(TAG, "MCP4726 initialized (addr=0x%02X)", MCP4726_I2C_ADDR);
+    // ESP_LOGI(TAG, "MCP4726 initialized (addr=0x%02X)", MCP4726_I2C_ADDR);
     return ESP_OK;
 }
 
@@ -121,7 +121,7 @@ esp_err_t mcp4726_set_voltage(float voltage)
     /* bit / 4096 = Vout / VDD  =>  bit = Vout / VDD * 4096 */
     uint16_t bit_value = (uint16_t)(voltage / MCP4726_VDD * MCP4726_RESOLUTION);
 
-    ESP_LOGI(TAG, "Voltage: %.3f V -> bit: %d", voltage, bit_value);
+    // ESP_LOGI(TAG, "Voltage: %.3f V -> bit: %d", voltage, bit_value);
 
     return mcp4726_set_raw(bit_value);
 }

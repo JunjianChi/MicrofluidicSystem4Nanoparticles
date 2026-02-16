@@ -75,7 +75,7 @@ void app_cmd_pump_on(system_state_t *state)
     mp6_start(&state->pump);
     state->pump_on = true;
     STATE_UNLOCK();
-    ESP_LOGI(TAG, "Pump ON");
+    // ESP_LOGI(TAG, "Pump ON");
 }
 
 void app_cmd_pump_off(system_state_t *state)
@@ -85,7 +85,7 @@ void app_cmd_pump_off(system_state_t *state)
     state->pump_on = false;
     state->amplitude = 0;
     STATE_UNLOCK();
-    ESP_LOGI(TAG, "Pump OFF");
+    // ESP_LOGI(TAG, "Pump OFF");
 }
 
 void app_cmd_set_amplitude(system_state_t *state, uint16_t amplitude)
@@ -94,7 +94,7 @@ void app_cmd_set_amplitude(system_state_t *state, uint16_t amplitude)
     mp6_set_amplitude(&state->pump, amplitude);
     state->amplitude = amplitude;
     STATE_UNLOCK();
-    ESP_LOGI(TAG, "Amplitude set to %d", amplitude);
+    // ESP_LOGI(TAG, "Amplitude set to %d", amplitude);
 }
 
 void app_cmd_set_frequency(system_state_t *state, uint16_t freq_hz)
@@ -103,7 +103,7 @@ void app_cmd_set_frequency(system_state_t *state, uint16_t freq_hz)
     mp6_set_frequency(&state->pump, freq_hz);
     state->frequency = freq_hz;
     STATE_UNLOCK();
-    ESP_LOGI(TAG, "Frequency set to %d Hz", freq_hz);
+    // ESP_LOGI(TAG, "Frequency set to %d Hz", freq_hz);
 }
 
 void app_cmd_pid_start(system_state_t *state, float target, uint32_t duration)
@@ -130,7 +130,7 @@ void app_cmd_pid_start(system_state_t *state, float target, uint32_t duration)
     state->pid_elapsed_s = 0;
 
     STATE_UNLOCK();
-    ESP_LOGI(TAG, "PID START: target=%.2f ul/min, duration=%lus", target, (unsigned long)duration);
+    // ESP_LOGI(TAG, "PID START: target=%.2f ul/min, duration=%lus", target, (unsigned long)duration);
 }
 
 void app_cmd_pid_stop(system_state_t *state)
@@ -147,7 +147,7 @@ void app_cmd_pid_stop(system_state_t *state)
     state->pid_duration_s = 0;
 
     STATE_UNLOCK();
-    ESP_LOGI(TAG, "PID STOP → MANUAL mode");
+    // ESP_LOGI(TAG, "PID STOP → MANUAL mode");
 }
 
 void app_cmd_pid_target(system_state_t *state, float target)
@@ -156,7 +156,7 @@ void app_cmd_pid_target(system_state_t *state, float target)
     pid_set_target(&state->pid, target);
     state->pid_target = target;
     STATE_UNLOCK();
-    ESP_LOGI(TAG, "PID target updated to %.2f ul/min", target);
+    // ESP_LOGI(TAG, "PID target updated to %.2f ul/min", target);
 }
 
 void app_cmd_pid_tune(system_state_t *state, float kp, float ki, float kd)
@@ -164,7 +164,14 @@ void app_cmd_pid_tune(system_state_t *state, float kp, float ki, float kd)
     STATE_LOCK();
     pid_set_gains(&state->pid, kp, ki, kd);
     STATE_UNLOCK();
-    ESP_LOGI(TAG, "PID gains: Kp=%.2f Ki=%.2f Kd=%.2f", kp, ki, kd);
+    // ESP_LOGI(TAG, "PID gains: Kp=%.2f Ki=%.2f Kd=%.2f", kp, ki, kd);
+}
+
+void app_cmd_status(system_state_t *state)
+{
+    STATE_LOCK();
+    serial_comm_send_status(state);
+    STATE_UNLOCK();
 }
 
 void app_cmd_scan(system_state_t *state)
@@ -259,7 +266,7 @@ static void sensor_read_task(void *param)
 
                     STATE_UNLOCK();
                     serial_comm_send_event_pid_done();
-                    ESP_LOGI(TAG, "PID duration expired → MANUAL mode");
+                    // ESP_LOGI(TAG, "PID duration expired → MANUAL mode");
                     tick_count = 0;
                     continue;
                 }
@@ -334,8 +341,8 @@ static esp_err_t hw_init(void)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== Microfluidic Control System ===");
-    ESP_LOGI(TAG, "Firmware V3.0.0");
+    // ESP_LOGI(TAG, "=== Microfluidic Control System ===");
+    // ESP_LOGI(TAG, "Firmware V3.0.0");
 
     /* Initialize system state */
     memset(&g_state, 0, sizeof(g_state));
@@ -361,8 +368,8 @@ void app_main(void)
         return;
     }
 
-    ESP_LOGI(TAG, "Hardware initialized successfully");
-    ESP_LOGI(TAG, "Mode: MANUAL (default)");
+    // ESP_LOGI(TAG, "Hardware initialized successfully");
+    // ESP_LOGI(TAG, "Mode: MANUAL (default)");
 
     /* Create FreeRTOS tasks */
     xTaskCreate(serial_cmd_task, "serial_cmd", SERIAL_CMD_TASK_STACK,
@@ -371,5 +378,5 @@ void app_main(void)
     xTaskCreate(sensor_read_task, "sensor_read", SENSOR_READ_TASK_STACK,
                 NULL, SENSOR_READ_TASK_PRIO, NULL);
 
-    ESP_LOGI(TAG, "Tasks started. Ready for commands.");
+    // ESP_LOGI(TAG, "Tasks started. Ready for commands.");
 }

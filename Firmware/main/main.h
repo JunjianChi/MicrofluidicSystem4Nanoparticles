@@ -68,6 +68,7 @@ void app_cmd_pid_start(system_state_t *state, float target, uint32_t duration);
 void app_cmd_pid_stop(system_state_t *state);
 void app_cmd_pid_target(system_state_t *state, float target);
 void app_cmd_pid_tune(system_state_t *state, float kp, float ki, float kd);
+void app_cmd_status(system_state_t *state);
 void app_cmd_scan(system_state_t *state);
 
 #ifdef __cplusplus

@@ -52,7 +52,7 @@ void system_config_init(system_config_t *config)
     config->wifi.server_port = SERVER_PORT;
 #endif
 
-    ESP_LOGI(TAG, "System configuration initialized");
+    // ESP_LOGI(TAG, "System configuration initialized");
 }
 
 void system_config_print(const system_config_t *config)
@@ -62,49 +62,49 @@ void system_config_print(const system_config_t *config)
         return;
     }
 
-    ESP_LOGI(TAG, "========== System Configuration ==========");
+    // ESP_LOGI(TAG, "========== System Configuration ==========");
 
     /* Sensor configuration */
-    ESP_LOGI(TAG, "Sensors:");
-    ESP_LOGI(TAG, "  Pressure:    %s", config->pressure_enabled ? "ENABLED" : "DISABLED");
-    ESP_LOGI(TAG, "  Temperature: %s", config->temperature_enabled ? "ENABLED" : "DISABLED");
-    ESP_LOGI(TAG, "  Flow:        %s", config->flow_enabled ? "ENABLED" : "DISABLED");
+    // ESP_LOGI(TAG, "Sensors:");
+    // ESP_LOGI(TAG, "  Pressure:    %s", config->pressure_enabled ? "ENABLED" : "DISABLED");
+    // ESP_LOGI(TAG, "  Temperature: %s", config->temperature_enabled ? "ENABLED" : "DISABLED");
+    // ESP_LOGI(TAG, "  Flow:        %s", config->flow_enabled ? "ENABLED" : "DISABLED");
 
     /* Pump driver configuration */
-    ESP_LOGI(TAG, "Pump Driver:");
+    // ESP_LOGI(TAG, "Pump Driver:");
     switch (config->pump_driver) {
         case PUMP_DRIVER_LOW:
-            ESP_LOGI(TAG, "  Type: LOW MP-Driver");
+            // ESP_LOGI(TAG, "  Type: LOW MP-Driver");
             break;
         case PUMP_DRIVER_HIGH:
-            ESP_LOGI(TAG, "  Type: HIGH MP-Driver");
+            // ESP_LOGI(TAG, "  Type: HIGH MP-Driver");
             break;
         case PUMP_DRIVER_STANDARD:
-            ESP_LOGI(TAG, "  Type: Standard MP-Driver");
+            // ESP_LOGI(TAG, "  Type: Standard MP-Driver");
             break;
         default:
-            ESP_LOGI(TAG, "  Type: Unknown");
+            // ESP_LOGI(TAG, "  Type: Unknown");
             break;
     }
 
     /* Communication configuration */
-    ESP_LOGI(TAG, "Communication:");
+    // ESP_LOGI(TAG, "Communication:");
     if (config->comm_type == COMM_TYPE_WIFI) {
-        ESP_LOGI(TAG, "  Type: WiFi");
+        // ESP_LOGI(TAG, "  Type: WiFi");
 #ifdef CONFIG_COMM_WIFI
-        ESP_LOGI(TAG, "  SSID: %s", config->wifi.ssid);
-        ESP_LOGI(TAG, "  Server: %s:%d", config->wifi.server_addr, config->wifi.server_port);
+        // ESP_LOGI(TAG, "  SSID: %s", config->wifi.ssid);
+        // ESP_LOGI(TAG, "  Server: %s:%d", config->wifi.server_addr, config->wifi.server_port);
 #endif
     } else {
-        ESP_LOGI(TAG, "  Type: Serial");
+        // ESP_LOGI(TAG, "  Type: Serial");
     }
 
     /* Pin configuration */
-    ESP_LOGI(TAG, "Pin Configuration:");
-    ESP_LOGI(TAG, "  I2C SDA:       GPIO %d", config->pins.i2c_sda);
-    ESP_LOGI(TAG, "  I2C SCL:       GPIO %d", config->pins.i2c_scl);
-    ESP_LOGI(TAG, "  MP Enable:     GPIO %d", config->pins.mp_enable);
-    ESP_LOGI(TAG, "  MP Clock:      GPIO %d", config->pins.mp_clock);
+    // ESP_LOGI(TAG, "Pin Configuration:");
+    // ESP_LOGI(TAG, "  I2C SDA:       GPIO %d", config->pins.i2c_sda);
+    // ESP_LOGI(TAG, "  I2C SCL:       GPIO %d", config->pins.i2c_scl);
+    // ESP_LOGI(TAG, "  MP Enable:     GPIO %d", config->pins.mp_enable);
+    // ESP_LOGI(TAG, "  MP Clock:      GPIO %d", config->pins.mp_clock);
 
-    ESP_LOGI(TAG, "==========================================");
+    // ESP_LOGI(TAG, "==========================================");
 }

@@ -57,7 +57,7 @@ esp_err_t serial_comm_init(void)
         return ret;
     }
 
-    ESP_LOGI(TAG, "UART%d initialized: %d baud", SERIAL_UART_NUM, SERIAL_BAUD_RATE);
+    // ESP_LOGI(TAG, "UART%d initialized: %d baud", SERIAL_UART_NUM, SERIAL_BAUD_RATE);
     return ESP_OK;
 }
 
@@ -133,11 +133,13 @@ void serial_comm_send_status(const system_state_t *state)
 
 void serial_comm_send_scan(const uint8_t *devices, uint8_t count)
 {
-    serial_comm_send("SCAN");
-    for (uint8_t i = 0; i < count; i++) {
-        serial_comm_send(" %02X", devices[i]);
+    char buf[128];
+    int pos = snprintf(buf, sizeof(buf), "SCAN");
+    for (uint8_t i = 0; i < count && pos < (int)sizeof(buf) - 5; i++) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, " %02X", devices[i]);
     }
-    serial_comm_send("\n");
+    snprintf(buf + pos, sizeof(buf) - pos, "\n");
+    serial_comm_send("%s", buf);
 }
 
 void serial_comm_send_event_pid_done(void)
@@ -175,7 +177,7 @@ void serial_comm_process_cmd(system_state_t *state, const char *cmd_line)
         return;
     }
 
-    ESP_LOGI(TAG, "CMD: %s", cmd);
+    // ESP_LOGI(TAG, "CMD: %s", cmd);
 
     /* ---- PUMP ON ---- */
     if (strcmp(cmd, "PUMP ON") == 0) {
@@ -287,7 +289,7 @@ void serial_comm_process_cmd(system_state_t *state, const char *cmd_line)
 
     /* ---- STATUS ---- */
     if (strcmp(cmd, "STATUS") == 0) {
-        serial_comm_send_status(state);
+        app_cmd_status(state);
         return;
     }
 

@@ -68,7 +68,7 @@ static esp_err_t clock_pwm_init(uint32_t freq_hz)
         return ret;
     }
 
-    ESP_LOGI(TAG, "Clock PWM: %lu Hz, %d%% duty", freq_hz, MP6_CLOCK_DUTY_PERCENT);
+    // ESP_LOGI(TAG, "Clock PWM: %lu Hz, %d%% duty", freq_hz, MP6_CLOCK_DUTY_PERCENT);
     return ESP_OK;
 }
 
@@ -135,9 +135,9 @@ esp_err_t mp6_init(mp6_handle_t *handle)
     clock_pwm_stop();
 
     handle->is_initialized = true;
-    ESP_LOGI(TAG, "MP6 driver initialized");
-    ESP_LOGI(TAG, "  Enable: GPIO%d, Clock: GPIO%d, DAC: 0x%02X",
-             MP_DRIVER_ENABLE_IO, MP_DRIVER_CLOCK_IO, MCP4726_I2C_ADDR);
+    // ESP_LOGI(TAG, "MP6 driver initialized");
+    // ESP_LOGI(TAG, "  Enable: GPIO%d, Clock: GPIO%d, DAC: 0x%02X",
+             // MP_DRIVER_ENABLE_IO, MP_DRIVER_CLOCK_IO, MCP4726_I2C_ADDR);
 
     return ESP_OK;
 }
@@ -154,8 +154,8 @@ esp_err_t mp6_start(mp6_handle_t *handle)
     if (ret != ESP_OK) return ret;
 
     handle->is_running = true;
-    ESP_LOGI(TAG, "Pump started (%d Hz, amplitude %d)",
-             handle->freq_hz, handle->amplitude);
+    // ESP_LOGI(TAG, "Pump started (%d Hz, amplitude %d)",
+             // handle->freq_hz, handle->amplitude);
     return ESP_OK;
 }
 
@@ -171,7 +171,7 @@ esp_err_t mp6_stop(mp6_handle_t *handle)
 
     handle->amplitude = 0;
     handle->is_running = false;
-    ESP_LOGI(TAG, "Pump stopped");
+    // ESP_LOGI(TAG, "Pump stopped");
     return ESP_OK;
 }
 
@@ -200,7 +200,7 @@ esp_err_t mp6_set_amplitude(mp6_handle_t *handle, uint16_t amplitude)
     if (ret != ESP_OK) return ret;
 
     handle->amplitude = amplitude;
-    ESP_LOGI(TAG, "Amplitude: %d -> %.3f V", amplitude, voltage);
+    // ESP_LOGI(TAG, "Amplitude: %d -> %.3f V", amplitude, voltage);
 
     return ESP_OK;
 }
@@ -221,6 +221,6 @@ esp_err_t mp6_set_frequency(mp6_handle_t *handle, uint16_t freq_hz)
     if (ret != ESP_OK) return ret;
 
     handle->freq_hz = freq_hz;
-    ESP_LOGI(TAG, "Driver freq: %d Hz", freq_hz);
+    // ESP_LOGI(TAG, "Driver freq: %d Hz", freq_hz);
     return ESP_OK;
 }

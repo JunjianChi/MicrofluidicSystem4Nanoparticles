@@ -71,9 +71,9 @@ esp_err_t slf3s_init(slf3s_handle_t *handle)
     handle->product_number = FLOW_SENSOR_PRODUCT_NUMBER;
     handle->is_initialized = false;
 
-    ESP_LOGI(TAG, "SLF3S flow sensor initialized");
-    ESP_LOGI(TAG, "Configured model: %s", FLOW_SENSOR_MODEL_NAME);
-    ESP_LOGI(TAG, "Scale factor: %.1f", handle->scale_factor);
+    // ESP_LOGI(TAG, "SLF3S flow sensor initialized");
+    // ESP_LOGI(TAG, "Configured model: %s", FLOW_SENSOR_MODEL_NAME);
+    // ESP_LOGI(TAG, "Scale factor: %.1f", handle->scale_factor);
 
     return ESP_OK;
 }
@@ -121,29 +121,29 @@ esp_err_t slf3s_start_measurement(slf3s_handle_t *handle)
     product_number = ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
                      ((uint32_t)data[3] << 8) | (uint32_t)data[4];
 
-    ESP_LOGI(TAG, "Detected product number: 0x%08lX", product_number);
+    // ESP_LOGI(TAG, "Detected product number: 0x%08lX", product_number);
 
     /* Verify detected product number matches configured model */
     if ((product_number & 0xFFFFFF00) == SLF3S_PN_1300) {
-        ESP_LOGI(TAG, "Auto-detected: SLF3S-1300F");
+        // ESP_LOGI(TAG, "Auto-detected: SLF3S-1300F");
         if (FLOW_SENSOR_PRODUCT_NUMBER != SLF3S_PN_1300) {
             ESP_LOGW(TAG, "WARNING: Detected 1300F but configured as %s", FLOW_SENSOR_MODEL_NAME);
             ESP_LOGW(TAG, "Using configured scale factor: %.1f", FLOW_SENSOR_SCALE_FACTOR);
         }
     } else if ((product_number & 0xFFFFFF00) == SLF3S_PN_0600) {
-        ESP_LOGI(TAG, "Auto-detected: SLF3S-0600F");
+        // ESP_LOGI(TAG, "Auto-detected: SLF3S-0600F");
         if (FLOW_SENSOR_PRODUCT_NUMBER != SLF3S_PN_0600) {
             ESP_LOGW(TAG, "WARNING: Detected 0600F but configured as %s", FLOW_SENSOR_MODEL_NAME);
             ESP_LOGW(TAG, "Using configured scale factor: %.1f", FLOW_SENSOR_SCALE_FACTOR);
         }
     } else {
         ESP_LOGW(TAG, "Unknown product number: 0x%08lX", product_number);
-        ESP_LOGI(TAG, "Using configured model: %s", FLOW_SENSOR_MODEL_NAME);
+        // ESP_LOGI(TAG, "Using configured model: %s", FLOW_SENSOR_MODEL_NAME);
     }
 
     /* Always use configured scale factor from Kconfig */
     handle->scale_factor = FLOW_SENSOR_SCALE_FACTOR;
-    ESP_LOGI(TAG, "Using scale factor: %.1f", handle->scale_factor);
+    // ESP_LOGI(TAG, "Using scale factor: %.1f", handle->scale_factor);
 
     /* Soft reset */
     cmd[0] = CMD_SOFT_RESET;
@@ -162,7 +162,7 @@ esp_err_t slf3s_start_measurement(slf3s_handle_t *handle)
     }
 
     handle->is_initialized = true;
-    ESP_LOGI(TAG, "Flow measurement started (calibration: 0x%02X)", handle->calibration_cmd);
+    // ESP_LOGI(TAG, "Flow measurement started (calibration: 0x%02X)", handle->calibration_cmd);
 
     return ESP_OK;
 }
@@ -193,9 +193,9 @@ esp_err_t slf3s_start_measurement_simple(slf3s_handle_t *handle)
     }
 
     handle->is_initialized = true;
-    ESP_LOGI(TAG, "Flow measurement started (simple mode)");
-    ESP_LOGI(TAG, "Using configured model: %s (scale: %.1f)",
-             FLOW_SENSOR_MODEL_NAME, handle->scale_factor);
+    // ESP_LOGI(TAG, "Flow measurement started (simple mode)");
+    // ESP_LOGI(TAG, "Using configured model: %s (scale: %.1f)",
+             // FLOW_SENSOR_MODEL_NAME, handle->scale_factor);
 
     return ESP_OK;
 }
@@ -220,7 +220,7 @@ esp_err_t slf3s_stop_measurement(slf3s_handle_t *handle)
     vTaskDelay(pdMS_TO_TICKS(100));
     handle->is_initialized = false;
 
-    ESP_LOGI(TAG, "Flow measurement stopped");
+    // ESP_LOGI(TAG, "Flow measurement stopped");
     return ESP_OK;
 }
 
@@ -273,7 +273,7 @@ esp_err_t slf3s_set_calibration(slf3s_handle_t *handle, uint8_t calibration_cmd)
     }
 
     handle->calibration_cmd = calibration_cmd;
-    ESP_LOGI(TAG, "Calibration set to: 0x%02X", calibration_cmd);
+    // ESP_LOGI(TAG, "Calibration set to: 0x%02X", calibration_cmd);
 
     return ESP_OK;
 }
