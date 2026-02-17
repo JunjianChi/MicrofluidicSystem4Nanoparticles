@@ -94,7 +94,7 @@ void serial_comm_send_err(const char *reason);
 void serial_comm_send_data(float flow);
 
 /**
- * @brief Send status response: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration>
+ * @brief Send status response: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw>
  */
 void serial_comm_send_status(const system_state_t *state);
 

@@ -33,7 +33,7 @@ _ESP_LOG_RE = re.compile(r'^[EWIDV] \(\d+\) ')
 
 @dataclass
 class SystemStatus:
-    """Parsed STATUS response: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration>"""
+    """Parsed STATUS response."""
     mode: str           # "MANUAL" or "PID"
     pump_on: bool
     amplitude: int
@@ -42,6 +42,9 @@ class SystemStatus:
     pid_target: float
     pid_elapsed_s: int
     pid_duration_s: int
+    pump_available: bool
+    sensor_available: bool
+    pressure_available: bool
 
 
 class CommError(Exception):
@@ -310,9 +313,12 @@ class MicrofluidicController:
                     pass
             return
 
-        # Everything else is a command response (OK, ERR, S ..., SCAN ...)
-        self._response_line = line
-        self._response_event.set()
+        # Valid command responses start with: OK, ERR, S , SCAN
+        # Anything else is stale boot output or garbage - ignore it.
+        if (line.startswith("OK") or line.startswith("ERR") or
+                line.startswith("S ") or line.startswith("SCAN")):
+            self._response_line = line
+            self._response_event.set()
 
     # ------------------------------------------------------------------
     # Parsers
@@ -320,7 +326,7 @@ class MicrofluidicController:
 
     @staticmethod
     def _parse_status(line: str) -> SystemStatus:
-        """Parse: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration>"""
+        """Parse: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw>"""
         parts = line.split()
         if len(parts) < 9 or parts[0] != "S":
             raise CommError(f"Invalid STATUS response: {line}")
@@ -333,6 +339,9 @@ class MicrofluidicController:
             pid_target=float(parts[6]),
             pid_elapsed_s=int(parts[7]),
             pid_duration_s=int(parts[8]),
+            pump_available=(parts[9] == "1") if len(parts) > 9 else True,
+            sensor_available=(parts[10] == "1") if len(parts) > 10 else True,
+            pressure_available=(parts[11] == "1") if len(parts) > 11 else False,
         )
 
     # ------------------------------------------------------------------

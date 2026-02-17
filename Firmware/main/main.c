@@ -222,14 +222,55 @@ static void sensor_read_task(void *param)
     uint32_t tick_count = 0;
     const uint32_t ticks_per_second = 1000 / SENSOR_INTERVAL_MS;
 
+    /* Hot-plug re-probe counter (every 5 seconds) */
+    uint32_t reprobe_count = 0;
+    const uint32_t REPROBE_TICKS = 5 * ticks_per_second;
+
     while (1) {
         vTaskDelayUntil(&last_wake, interval);
 
-        /* Read flow sensor */
+        /* --- Hot-plug: re-probe unavailable devices every 5s --- */
+        reprobe_count++;
+        if (reprobe_count >= REPROBE_TICKS) {
+            reprobe_count = 0;
+
+            if (!g_state.pump_available) {
+                if (i2c_interface_probe(MCP4726_I2C_ADDR) == ESP_OK) {
+                    if (mp6_init(&g_state.pump) == ESP_OK) {
+                        STATE_LOCK();
+                        g_state.pump_available = true;
+                        STATE_UNLOCK();
+                    }
+                }
+            }
+
+            if (!g_state.sensor_available) {
+                if (i2c_interface_probe(SLF3S_I2C_ADDR) == ESP_OK) {
+                    if (slf3s_init(&g_state.flow_sensor) == ESP_OK &&
+                        slf3s_start_measurement(&g_state.flow_sensor) == ESP_OK) {
+                        STATE_LOCK();
+                        g_state.sensor_available = true;
+                        STATE_UNLOCK();
+                    }
+                }
+            }
+
+            if (!g_state.pressure_available) {
+                if (i2c_interface_probe(PRESSURE_SENSOR_I2C_ADDR) == ESP_OK) {
+                    STATE_LOCK();
+                    g_state.pressure_available = true;
+                    STATE_UNLOCK();
+                }
+            }
+        }
+
+        /* Read flow sensor (skip if unavailable) */
         float flow = 0.0f;
-        esp_err_t ret = slf3s_read_flow(&g_state.flow_sensor, &flow);
-        if (ret != ESP_OK) {
-            flow = 0.0f;
+        if (g_state.sensor_available) {
+            esp_err_t ret = slf3s_read_flow(&g_state.flow_sensor, &flow);
+            if (ret != ESP_OK) {
+                flow = 0.0f;
+            }
         }
 
         STATE_LOCK();
@@ -293,6 +334,13 @@ static esp_err_t hw_init(void)
 {
     esp_err_t ret;
 
+    /* Initialize UART first - must always work for PC communication */
+    ret = serial_comm_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Serial comm init failed!");
+        return ret;
+    }
+
     /* Initialize I2C bus */
     ret = i2c_interface_init();
     if (ret != ESP_OK) {
@@ -300,36 +348,46 @@ static esp_err_t hw_init(void)
         return ret;
     }
 
-    /* Scan I2C bus */
+    /* Scan I2C bus and detect hardware by address */
     uint8_t devices[16];
     uint8_t num_found = 0;
     i2c_interface_scan(devices, 16, &num_found);
 
-    /* Initialize MP6 pump driver */
-    ret = mp6_init(&g_state.pump);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "MP6 pump init failed!");
-        return ret;
+    /* Detect MP6 pump (MCP4726 DAC at 0x61) */
+    if (i2c_interface_probe(MCP4726_I2C_ADDR) == ESP_OK) {
+        ret = mp6_init(&g_state.pump);
+        if (ret == ESP_OK) {
+            g_state.pump_available = true;
+            ESP_LOGI(TAG, "MP6 pump driver detected (DAC at 0x%02X)", MCP4726_I2C_ADDR);
+        } else {
+            ESP_LOGW(TAG, "MP6 DAC found but driver init failed");
+        }
+    } else {
+        ESP_LOGW(TAG, "MP6 pump not detected (no DAC at 0x%02X)", MCP4726_I2C_ADDR);
     }
 
-    /* Initialize flow sensor */
-    ret = slf3s_init(&g_state.flow_sensor);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Flow sensor init failed!");
-        return ret;
+    /* Detect flow sensor (SLF3S at 0x08) */
+    if (i2c_interface_probe(SLF3S_I2C_ADDR) == ESP_OK) {
+        ret = slf3s_init(&g_state.flow_sensor);
+        if (ret == ESP_OK) {
+            ret = slf3s_start_measurement(&g_state.flow_sensor);
+        }
+        if (ret == ESP_OK) {
+            g_state.sensor_available = true;
+            ESP_LOGI(TAG, "Flow sensor detected (SLF3S at 0x%02X)", SLF3S_I2C_ADDR);
+        } else {
+            ESP_LOGW(TAG, "Flow sensor found but init failed");
+        }
+    } else {
+        ESP_LOGW(TAG, "Flow sensor not detected (no device at 0x%02X)", SLF3S_I2C_ADDR);
     }
 
-    ret = slf3s_start_measurement(&g_state.flow_sensor);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Flow sensor start measurement failed!");
-        return ret;
-    }
-
-    /* Initialize UART */
-    ret = serial_comm_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Serial comm init failed!");
-        return ret;
+    /* Detect pressure sensor (0x76) - detection only, no driver yet */
+    if (i2c_interface_probe(PRESSURE_SENSOR_I2C_ADDR) == ESP_OK) {
+        g_state.pressure_available = true;
+        ESP_LOGI(TAG, "Pressure sensor detected (at 0x%02X)", PRESSURE_SENSOR_I2C_ADDR);
+    } else {
+        ESP_LOGW(TAG, "Pressure sensor not detected (no device at 0x%02X)", PRESSURE_SENSOR_I2C_ADDR);
     }
 
     return ESP_OK;
@@ -350,6 +408,9 @@ void app_main(void)
     g_state.pump_on = false;
     g_state.stream_enabled = false;
     g_state.frequency = 100;    /* Default frequency */
+    g_state.pump_available = false;
+    g_state.sensor_available = false;
+    g_state.pressure_available = false;
 
     /* Initialize PID controller (default gains) */
     pid_init(&g_state.pid);
@@ -361,12 +422,8 @@ void app_main(void)
         return;
     }
 
-    /* Initialize hardware */
-    esp_err_t ret = hw_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Hardware initialization failed!");
-        return;
-    }
+    /* Initialize hardware (non-fatal: tasks always start) */
+    hw_init();
 
     // ESP_LOGI(TAG, "Hardware initialized successfully");
     // ESP_LOGI(TAG, "Mode: MANUAL (default)");

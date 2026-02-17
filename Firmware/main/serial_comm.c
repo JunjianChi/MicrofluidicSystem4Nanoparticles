@@ -120,7 +120,7 @@ void serial_comm_send_data(float flow)
 
 void serial_comm_send_status(const system_state_t *state)
 {
-    serial_comm_send("S %s %d %d %d %.2f %.2f %d %d\n",
+    serial_comm_send("S %s %d %d %d %.2f %.2f %d %d %d %d %d\n",
                      (state->mode == MODE_PID) ? "PID" : "MANUAL",
                      state->pump_on ? 1 : 0,
                      (int)state->amplitude,
@@ -128,7 +128,10 @@ void serial_comm_send_status(const system_state_t *state)
                      state->current_flow,
                      state->pid_target,
                      (int)state->pid_elapsed_s,
-                     (int)state->pid_duration_s);
+                     (int)state->pid_duration_s,
+                     state->pump_available ? 1 : 0,
+                     state->sensor_available ? 1 : 0,
+                     state->pressure_available ? 1 : 0);
 }
 
 void serial_comm_send_scan(const uint8_t *devices, uint8_t count)
@@ -181,6 +184,10 @@ void serial_comm_process_cmd(system_state_t *state, const char *cmd_line)
 
     /* ---- PUMP ON ---- */
     if (strcmp(cmd, "PUMP ON") == 0) {
+        if (!state->pump_available) {
+            serial_comm_send_err("PUMP_UNAVAIL");
+            return;
+        }
         if (state->mode == MODE_PID) {
             serial_comm_send_err("PID_ACTIVE");
             return;
@@ -192,6 +199,10 @@ void serial_comm_process_cmd(system_state_t *state, const char *cmd_line)
 
     /* ---- PUMP OFF ---- */
     if (strcmp(cmd, "PUMP OFF") == 0) {
+        if (!state->pump_available) {
+            serial_comm_send_err("PUMP_UNAVAIL");
+            return;
+        }
         if (state->mode == MODE_PID) {
             /* PUMP OFF during PID → auto PID STOP */
             app_cmd_pid_stop(state);
@@ -204,6 +215,10 @@ void serial_comm_process_cmd(system_state_t *state, const char *cmd_line)
 
     /* ---- AMP <value> ---- */
     if (starts_with(cmd, "AMP ")) {
+        if (!state->pump_available) {
+            serial_comm_send_err("PUMP_UNAVAIL");
+            return;
+        }
         if (state->mode == MODE_PID) {
             serial_comm_send_err("PID_ACTIVE");
             return;
@@ -220,6 +235,10 @@ void serial_comm_process_cmd(system_state_t *state, const char *cmd_line)
 
     /* ---- FREQ <value> ---- */
     if (starts_with(cmd, "FREQ ")) {
+        if (!state->pump_available) {
+            serial_comm_send_err("PUMP_UNAVAIL");
+            return;
+        }
         if (state->mode == MODE_PID) {
             serial_comm_send_err("PID_ACTIVE");
             return;
@@ -236,6 +255,14 @@ void serial_comm_process_cmd(system_state_t *state, const char *cmd_line)
 
     /* ---- PID START <target> <duration> ---- */
     if (starts_with(cmd, "PID START ")) {
+        if (!state->pump_available) {
+            serial_comm_send_err("PUMP_UNAVAIL");
+            return;
+        }
+        if (!state->sensor_available) {
+            serial_comm_send_err("SENSOR_UNAVAIL");
+            return;
+        }
         const char *args = skip_spaces(cmd + 10);
         float target = 0;
         int duration = 0;

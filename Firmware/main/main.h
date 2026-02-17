@@ -50,6 +50,11 @@ struct system_state {
     /* Data stream */
     bool stream_enabled;
 
+    /* Hardware availability (updated by hot-plug detection) */
+    bool pump_available;
+    bool sensor_available;
+    bool pressure_available;
+
     /* Hardware handles */
     mp6_handle_t pump;
     slf3s_handle_t flow_sensor;
