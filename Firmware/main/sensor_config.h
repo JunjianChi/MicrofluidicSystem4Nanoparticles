@@ -51,7 +51,7 @@ extern "C" {
 /* Flow sensor product model selection */
 #if defined(CONFIG_FLOW_SENSOR_0600F)
     #define FLOW_SENSOR_PRODUCT_NUMBER  0x07030300
-    #define FLOW_SENSOR_SCALE_FACTOR    10000.0f
+    #define FLOW_SENSOR_SCALE_FACTOR    10.0f
     #define FLOW_SENSOR_MODEL_NAME      "SLF3S-0600F"
 #elif defined(CONFIG_FLOW_SENSOR_1300F)
     #define FLOW_SENSOR_PRODUCT_NUMBER  0x07030200
@@ -60,7 +60,7 @@ extern "C" {
 #else
     /* Default to 0600F if not specified */
     #define FLOW_SENSOR_PRODUCT_NUMBER  0x07030300
-    #define FLOW_SENSOR_SCALE_FACTOR    10000.0f
+    #define FLOW_SENSOR_SCALE_FACTOR    10.0f
     #define FLOW_SENSOR_MODEL_NAME      "SLF3S-0600F"
 #endif
 

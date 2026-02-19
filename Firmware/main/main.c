@@ -267,9 +267,21 @@ static void sensor_read_task(void *param)
         /* Read flow sensor (skip if unavailable) */
         float flow = 0.0f;
         if (g_state.sensor_available) {
-            esp_err_t ret = slf3s_read_flow(&g_state.flow_sensor, &flow);
-            if (ret != ESP_OK) {
-                flow = 0.0f;
+            slf3s_measurement_t meas = {0};
+            esp_err_t ret = slf3s_read_measurement(&g_state.flow_sensor, &meas);
+            if (ret == ESP_OK) {
+                flow = meas.flow;
+                STATE_LOCK();
+                g_state.current_temperature = meas.temperature;
+                g_state.sensor_flags = meas.flags;
+
+                /* Air-in-line detection (edge-triggered: notify once on rising edge) */
+                bool air_now = (meas.flags & SLF3S_FLAG_AIR_IN_LINE) != 0;
+                if (air_now && !g_state.air_in_line) {
+                    serial_comm_send_event_air_in_line();
+                }
+                g_state.air_in_line = air_now;
+                STATE_UNLOCK();
             }
         }
 
@@ -321,7 +333,7 @@ static void sensor_read_task(void *param)
         STATE_UNLOCK();
 
         if (stream) {
-            serial_comm_send_data(flow);
+            serial_comm_send_data(flow, g_state.current_temperature);
         }
     }
 }

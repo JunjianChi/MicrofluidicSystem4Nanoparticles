@@ -25,26 +25,43 @@ extern "C" {
 #endif
 
 /* I2C Address */
-#define SLF3S_I2C_ADDR          0x08
+#define SLF3S_I2C_ADDR              0x08
+#define SLF3S_GENERAL_CALL_ADDR     0x00    /*!< General call address for soft reset */
 
 /* Product Numbers */
-#define SLF3S_PN_1300           0x07030200
-#define SLF3S_PN_0600           0x07030300
+#define SLF3S_PN_1300               0x07030200
+#define SLF3S_PN_0600               0x07030300
 
 /* Scale Factors */
-#define SLF3S_SCALE_FACTOR_1300 500.0f
-#define SLF3S_SCALE_FACTOR_0600 10000.0f
+#define SLF3S_SCALE_FACTOR_1300     500.0f
+#define SLF3S_SCALE_FACTOR_0600     10.0f
+#define SLF3S_TEMP_SCALE_FACTOR     200.0f  /*!< Temperature scale factor (°C) */
 
 /* Calibration Command Bytes */
-#define SLF3S_CALIBRATION_WATER 0x08
-#define SLF3S_CALIBRATION_IPA   0x15
+#define SLF3S_CALIBRATION_WATER     0x08
+#define SLF3S_CALIBRATION_IPA       0x15
+
+/* Signaling flags bit masks */
+#define SLF3S_FLAG_AIR_IN_LINE      (1 << 0)
+#define SLF3S_FLAG_HIGH_FLOW        (1 << 1)
+#define SLF3S_FLAG_EXP_SMOOTHING    (1 << 5)
+
+/* Measurement result structure */
+typedef struct {
+    float flow;             /*!< Flow rate in µl/min */
+    float temperature;      /*!< Temperature in °C */
+    uint16_t flags;         /*!< Signaling flags (air-in-line, high flow, etc.) */
+} slf3s_measurement_t;
 
 /* Flow sensor data structure */
 typedef struct {
     float scale_factor;
     uint32_t product_number;
+    uint64_t serial_number;         /*!< 64-bit unique serial number */
     uint8_t calibration_cmd;
     bool is_initialized;
+    float last_temperature;         /*!< Last read temperature in °C */
+    uint16_t last_flags;            /*!< Last read signaling flags */
 } slf3s_handle_t;
 
 /**
@@ -82,13 +99,22 @@ esp_err_t slf3s_start_measurement_simple(slf3s_handle_t *handle);
 esp_err_t slf3s_stop_measurement(slf3s_handle_t *handle);
 
 /**
- * @brief Read flow value from sensor
+ * @brief Read flow value from sensor (flow only, 3 bytes)
  *
  * @param handle Pointer to flow sensor handle
  * @param flow_value Pointer to store the flow value (in µl/min)
  * @return esp_err_t ESP_OK on success, error code otherwise
  */
 esp_err_t slf3s_read_flow(slf3s_handle_t *handle, float *flow_value);
+
+/**
+ * @brief Read full measurement from sensor (flow + temperature + flags, 9 bytes)
+ *
+ * @param handle Pointer to flow sensor handle
+ * @param measurement Pointer to store the measurement result
+ * @return esp_err_t ESP_OK on success, error code otherwise
+ */
+esp_err_t slf3s_read_measurement(slf3s_handle_t *handle, slf3s_measurement_t *measurement);
 
 /**
  * @brief Set calibration mode

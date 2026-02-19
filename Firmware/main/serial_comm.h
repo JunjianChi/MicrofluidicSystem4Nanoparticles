@@ -88,10 +88,11 @@ void serial_comm_send_ok(void);
 void serial_comm_send_err(const char *reason);
 
 /**
- * @brief Send data stream line: D <flow>
+ * @brief Send data stream line: D <flow> <temperature>
  * @param flow  Flow rate in ul/min
+ * @param temperature  Sensor temperature in °C
  */
-void serial_comm_send_data(float flow);
+void serial_comm_send_data(float flow, float temperature);
 
 /**
  * @brief Send status response: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw>
@@ -116,6 +117,11 @@ void serial_comm_send_event_pid_done(void);
  * @param actual    Actual flow rate
  */
 void serial_comm_send_event_flow_err(float target, float actual);
+
+/**
+ * @brief Send EVENT AIR_IN_LINE notification
+ */
+void serial_comm_send_event_air_in_line(void);
 
 /**
  * @brief Parse and execute a command line

@@ -113,14 +113,14 @@ void serial_comm_send_err(const char *reason)
     serial_comm_send("ERR %s\n", reason);
 }
 
-void serial_comm_send_data(float flow)
+void serial_comm_send_data(float flow, float temperature)
 {
-    serial_comm_send("D %.2f\n", flow);
+    serial_comm_send("D %.2f %.2f\n", flow, temperature);
 }
 
 void serial_comm_send_status(const system_state_t *state)
 {
-    serial_comm_send("S %s %d %d %d %.2f %.2f %d %d %d %d %d\n",
+    serial_comm_send("S %s %d %d %d %.2f %.2f %d %d %d %d %d %.2f\n",
                      (state->mode == MODE_PID) ? "PID" : "MANUAL",
                      state->pump_on ? 1 : 0,
                      (int)state->amplitude,
@@ -131,7 +131,8 @@ void serial_comm_send_status(const system_state_t *state)
                      (int)state->pid_duration_s,
                      state->pump_available ? 1 : 0,
                      state->sensor_available ? 1 : 0,
-                     state->pressure_available ? 1 : 0);
+                     state->pressure_available ? 1 : 0,
+                     state->current_temperature);
 }
 
 void serial_comm_send_scan(const uint8_t *devices, uint8_t count)
@@ -153,6 +154,11 @@ void serial_comm_send_event_pid_done(void)
 void serial_comm_send_event_flow_err(float target, float actual)
 {
     serial_comm_send("EVENT FLOW_ERR %.2f %.2f\n", target, actual);
+}
+
+void serial_comm_send_event_air_in_line(void)
+{
+    serial_comm_send("EVENT AIR_IN_LINE\n");
 }
 
 /********************************************************

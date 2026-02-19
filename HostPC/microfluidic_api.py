@@ -96,9 +96,10 @@ class MicrofluidicController:
         self._running = False
 
         # Callbacks (user-settable)
-        self.on_data: Optional[Callable[[float], None]] = None
+        self.on_data: Optional[Callable[[float, float], None]] = None  # (flow, temperature)
         self.on_pid_done: Optional[Callable[[], None]] = None
         self.on_flow_err: Optional[Callable[[float, float], None]] = None
+        self.on_air_in_line: Optional[Callable[[], None]] = None
 
         # Response queue for synchronous command/response
         self._response_event = threading.Event()
@@ -285,12 +286,14 @@ class MicrofluidicController:
         if _ESP_LOG_RE.match(line):
             return
 
-        # Data stream: D <flow>
+        # Data stream: D <flow> <temperature>
         if line.startswith("D "):
             if self.on_data:
                 try:
-                    flow = float(line.split()[1])
-                    self.on_data(flow)
+                    parts = line.split()
+                    flow = float(parts[1])
+                    temperature = float(parts[2]) if len(parts) > 2 else 0.0
+                    self.on_data(flow, temperature)
                 except (IndexError, ValueError):
                     pass
             return
@@ -299,6 +302,12 @@ class MicrofluidicController:
         if line == "EVENT PID_DONE":
             if self.on_pid_done:
                 self.on_pid_done()
+            return
+
+        # Event: AIR_IN_LINE
+        if line == "EVENT AIR_IN_LINE":
+            if self.on_air_in_line:
+                self.on_air_in_line()
             return
 
         # Event: FLOW_ERR

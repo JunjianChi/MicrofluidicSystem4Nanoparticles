@@ -24,7 +24,7 @@
 static const char *TAG = "SLF3S";
 
 /* Command definitions */
-#define CMD_SOFT_RESET      0x06
+#define CMD_SOFT_RESET      0x06    /*!< Sent to general call addr 0x00 */
 #define CMD_START_MEAS_H    0x36
 #define CMD_STOP_MEAS_H     0x3F
 #define CMD_STOP_MEAS_L     0xF9
@@ -32,6 +32,30 @@ static const char *TAG = "SLF3S";
 #define CMD_READ_PROD_L     0x7C
 #define CMD_READ_PROD_H2    0xE1
 #define CMD_READ_PROD_L2    0x02
+
+/* Timing constants (ms) */
+#define SLF3S_RESET_TIME_MS     25
+#define SLF3S_STOP_TIME_MS      1
+#define SLF3S_STARTUP_TIME_MS   12
+
+/**
+ * @brief CRC-8 checksum (polynomial 0x31, init 0xFF)
+ */
+static uint8_t slf3s_crc8(const uint8_t *data, size_t len)
+{
+    uint8_t crc = 0xFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t bit = 0; bit < 8; bit++) {
+            if (crc & 0x80) {
+                crc = (crc << 1) ^ 0x31;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    return crc;
+}
 
 /**
  * @brief Write command to SLF3S sensor
@@ -46,6 +70,19 @@ static esp_err_t slf3s_write_cmd(const uint8_t *cmd, size_t cmd_len)
 }
 
 /**
+ * @brief Send soft reset via general call address (0x00)
+ */
+static esp_err_t slf3s_soft_reset(void)
+{
+    uint8_t cmd = CMD_SOFT_RESET;
+    esp_err_t ret = i2c_interface_write(SLF3S_GENERAL_CALL_ADDR, &cmd, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Soft reset failed: %s", esp_err_to_name(ret));
+    }
+    return ret;
+}
+
+/**
  * @brief Read data from SLF3S sensor
  */
 static esp_err_t slf3s_read_data(uint8_t *data, size_t len)
@@ -55,6 +92,19 @@ static esp_err_t slf3s_read_data(uint8_t *data, size_t len)
         ESP_LOGE(TAG, "I2C read failed: %s", esp_err_to_name(ret));
     }
     return ret;
+}
+
+/**
+ * @brief Verify CRC for a 2-byte data word
+ */
+static esp_err_t slf3s_check_crc(const uint8_t *data)
+{
+    uint8_t expected = slf3s_crc8(data, 2);
+    if (expected != data[2]) {
+        ESP_LOGE(TAG, "CRC mismatch: expected 0x%02X, got 0x%02X", expected, data[2]);
+        return ESP_ERR_INVALID_CRC;
+    }
+    return ESP_OK;
 }
 
 esp_err_t slf3s_init(slf3s_handle_t *handle)
@@ -86,16 +136,16 @@ esp_err_t slf3s_start_measurement(slf3s_handle_t *handle)
 
     esp_err_t ret;
     uint8_t cmd[2];
-    uint8_t data[6];
+    uint8_t data[18];
     uint32_t product_number;
 
     /* Stop any ongoing measurement */
     cmd[0] = CMD_STOP_MEAS_H;
     cmd[1] = CMD_STOP_MEAS_L;
     slf3s_write_cmd(cmd, 2);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(SLF3S_STOP_TIME_MS + 1));
 
-    /* Read Product Identifier */
+    /* Read Product Identifier: send two 16-bit commands */
     cmd[0] = CMD_READ_PROD_H;
     cmd[1] = CMD_READ_PROD_L;
     ret = slf3s_write_cmd(cmd, 2);
@@ -112,46 +162,57 @@ esp_err_t slf3s_start_measurement(slf3s_handle_t *handle)
 
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    /* Read product number (6 bytes: MSB MSB CRC LSB LSB CRC) */
-    ret = slf3s_read_data(data, 6);
+    /* Read 18 bytes: Product Number (4B + 2 CRC) + Serial Number (8B + 4 CRC) */
+    ret = slf3s_read_data(data, 18);
     if (ret != ESP_OK) {
         return ret;
     }
 
+    /* Verify CRC for all 6 words */
+    for (int i = 0; i < 18; i += 3) {
+        ret = slf3s_check_crc(&data[i]);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Product ID CRC error at byte %d", i);
+            return ret;
+        }
+    }
+
+    /* Product number: bytes 0,1 (MSW) + bytes 3,4 (LSW), skip CRC bytes */
     product_number = ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
                      ((uint32_t)data[3] << 8) | (uint32_t)data[4];
+    handle->product_number = product_number;
 
-    // ESP_LOGI(TAG, "Detected product number: 0x%08lX", product_number);
+    /* Serial number: bytes 6,7 + 9,10 + 12,13 + 15,16 (skip CRC at 8,11,14,17) */
+    handle->serial_number = ((uint64_t)data[6]  << 56) | ((uint64_t)data[7]  << 48) |
+                            ((uint64_t)data[9]  << 40) | ((uint64_t)data[10] << 32) |
+                            ((uint64_t)data[12] << 24) | ((uint64_t)data[13] << 16) |
+                            ((uint64_t)data[15] << 8)  | (uint64_t)data[16];
+
+    ESP_LOGI(TAG, "Product: 0x%08lX, Serial: 0x%016llX",
+             (unsigned long)product_number, (unsigned long long)handle->serial_number);
 
     /* Verify detected product number matches configured model */
     if ((product_number & 0xFFFFFF00) == SLF3S_PN_1300) {
-        // ESP_LOGI(TAG, "Auto-detected: SLF3S-1300F");
         if (FLOW_SENSOR_PRODUCT_NUMBER != SLF3S_PN_1300) {
             ESP_LOGW(TAG, "WARNING: Detected 1300F but configured as %s", FLOW_SENSOR_MODEL_NAME);
-            ESP_LOGW(TAG, "Using configured scale factor: %.1f", FLOW_SENSOR_SCALE_FACTOR);
         }
     } else if ((product_number & 0xFFFFFF00) == SLF3S_PN_0600) {
-        // ESP_LOGI(TAG, "Auto-detected: SLF3S-0600F");
         if (FLOW_SENSOR_PRODUCT_NUMBER != SLF3S_PN_0600) {
             ESP_LOGW(TAG, "WARNING: Detected 0600F but configured as %s", FLOW_SENSOR_MODEL_NAME);
-            ESP_LOGW(TAG, "Using configured scale factor: %.1f", FLOW_SENSOR_SCALE_FACTOR);
         }
     } else {
-        ESP_LOGW(TAG, "Unknown product number: 0x%08lX", product_number);
-        // ESP_LOGI(TAG, "Using configured model: %s", FLOW_SENSOR_MODEL_NAME);
+        ESP_LOGW(TAG, "Unknown product number: 0x%08lX", (unsigned long)product_number);
     }
 
     /* Always use configured scale factor from Kconfig */
     handle->scale_factor = FLOW_SENSOR_SCALE_FACTOR;
-    // ESP_LOGI(TAG, "Using scale factor: %.1f", handle->scale_factor);
 
-    /* Soft reset */
-    cmd[0] = CMD_SOFT_RESET;
-    ret = slf3s_write_cmd(cmd, 1);
+    /* Soft reset via general call address 0x00 */
+    ret = slf3s_soft_reset();
     if (ret != ESP_OK) {
         return ret;
     }
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(SLF3S_RESET_TIME_MS + 5));
 
     /* Start continuous measurement */
     cmd[0] = CMD_START_MEAS_H;
@@ -161,8 +222,10 @@ esp_err_t slf3s_start_measurement(slf3s_handle_t *handle)
         return ret;
     }
 
+    /* Wait for first measurement to be available */
+    vTaskDelay(pdMS_TO_TICKS(SLF3S_STARTUP_TIME_MS + 5));
+
     handle->is_initialized = true;
-    // ESP_LOGI(TAG, "Flow measurement started (calibration: 0x%02X)", handle->calibration_cmd);
 
     return ESP_OK;
 }
@@ -176,13 +239,12 @@ esp_err_t slf3s_start_measurement_simple(slf3s_handle_t *handle)
     esp_err_t ret;
     uint8_t cmd[2];
 
-    /* Soft reset */
-    cmd[0] = CMD_SOFT_RESET;
-    ret = slf3s_write_cmd(cmd, 1);
+    /* Soft reset via general call address 0x00 */
+    ret = slf3s_soft_reset();
     if (ret != ESP_OK) {
         return ret;
     }
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(SLF3S_RESET_TIME_MS + 5));
 
     /* Start continuous measurement */
     cmd[0] = CMD_START_MEAS_H;
@@ -192,10 +254,10 @@ esp_err_t slf3s_start_measurement_simple(slf3s_handle_t *handle)
         return ret;
     }
 
+    /* Wait for first measurement to be available */
+    vTaskDelay(pdMS_TO_TICKS(SLF3S_STARTUP_TIME_MS + 5));
+
     handle->is_initialized = true;
-    // ESP_LOGI(TAG, "Flow measurement started (simple mode)");
-    // ESP_LOGI(TAG, "Using configured model: %s (scale: %.1f)",
-             // FLOW_SENSOR_MODEL_NAME, handle->scale_factor);
 
     return ESP_OK;
 }
@@ -217,10 +279,9 @@ esp_err_t slf3s_stop_measurement(slf3s_handle_t *handle)
         return ret;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(SLF3S_STOP_TIME_MS + 1));
     handle->is_initialized = false;
 
-    // ESP_LOGI(TAG, "Flow measurement stopped");
     return ESP_OK;
 }
 
@@ -237,31 +298,76 @@ esp_err_t slf3s_read_flow(slf3s_handle_t *handle, float *flow_value)
 
     esp_err_t ret;
     uint8_t data[3];
-    uint16_t sensor_flow_value;
-    int16_t signed_flow_value;
 
-    /* Read 3 bytes: MSB LSB CRC */
+    /* Read 3 bytes: Flow MSB, Flow LSB, CRC */
     ret = slf3s_read_data(data, 3);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read flow data from sensor");
         return ret;
     }
 
-    /* Debug: Print raw data */
-    ESP_LOGD(TAG, "Raw data: 0x%02X 0x%02X 0x%02X", data[0], data[1], data[2]);
+    /* Verify CRC */
+    ret = slf3s_check_crc(data);
+    if (ret != ESP_OK) {
+        return ret;
+    }
 
-    /* Combine MSB and LSB */
-    sensor_flow_value = ((uint16_t)data[0] << 8) | (uint16_t)data[1];
-    /* CRC is in data[2], but not checked in this version */
+    /* Convert raw to flow (signed 16-bit / scale factor) */
+    int16_t raw_flow = (int16_t)(((uint16_t)data[0] << 8) | data[1]);
+    *flow_value = (float)raw_flow / handle->scale_factor;
 
-    /* Convert to signed value */
-    signed_flow_value = (int16_t)sensor_flow_value;
+    ESP_LOGD(TAG, "Raw: %d, Flow: %.2f µl/min", raw_flow, *flow_value);
 
-    /* Scale the value */
-    *flow_value = ((float)signed_flow_value) / handle->scale_factor;
+    return ESP_OK;
+}
 
-    ESP_LOGD(TAG, "Sensor value: %d, Scale factor: %.1f, Flow: %.2f µl/min",
-             signed_flow_value, handle->scale_factor, *flow_value);
+esp_err_t slf3s_read_measurement(slf3s_handle_t *handle, slf3s_measurement_t *measurement)
+{
+    if (handle == NULL || measurement == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!handle->is_initialized) {
+        ESP_LOGW(TAG, "Sensor not initialized, call start_measurement first");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t ret;
+    uint8_t data[9];
+
+    /* Read 9 bytes: Flow(2)+CRC, Temp(2)+CRC, Flags(2)+CRC */
+    ret = slf3s_read_data(data, 9);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read measurement data");
+        return ret;
+    }
+
+    /* Verify CRC for each word */
+    for (int i = 0; i < 9; i += 3) {
+        ret = slf3s_check_crc(&data[i]);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "CRC error at byte %d", i);
+            return ret;
+        }
+    }
+
+    /* Flow rate: signed 16-bit / scale factor → µl/min */
+    int16_t raw_flow = (int16_t)(((uint16_t)data[0] << 8) | data[1]);
+    measurement->flow = (float)raw_flow / handle->scale_factor;
+
+    /* Temperature: signed 16-bit / 200 → °C */
+    int16_t raw_temp = (int16_t)(((uint16_t)data[3] << 8) | data[4]);
+    measurement->temperature = (float)raw_temp / SLF3S_TEMP_SCALE_FACTOR;
+
+    /* Signaling flags */
+    measurement->flags = ((uint16_t)data[6] << 8) | data[7];
+
+    /* Cache in handle */
+    handle->last_temperature = measurement->temperature;
+    handle->last_flags = measurement->flags;
+
+    ESP_LOGD(TAG, "Flow: %.2f µl/min, Temp: %.2f °C, Flags: 0x%04X",
+             measurement->flow, measurement->temperature, measurement->flags);
 
     return ESP_OK;
 }

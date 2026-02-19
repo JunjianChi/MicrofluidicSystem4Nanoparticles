@@ -41,6 +41,8 @@ struct system_state {
 
     /* Sensor data */
     float current_flow;
+    float current_temperature;  /*!< Flow sensor temperature (°C) */
+    uint16_t sensor_flags;      /*!< Flow sensor signaling flags */
 
     /* PID state */
     float pid_target;
@@ -49,6 +51,9 @@ struct system_state {
 
     /* Data stream */
     bool stream_enabled;
+
+    /* Air-in-line detection (edge-triggered) */
+    bool air_in_line;
 
     /* Hardware availability (updated by hot-plug detection) */
     bool pump_available;
