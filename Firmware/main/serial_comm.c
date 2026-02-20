@@ -161,6 +161,11 @@ void serial_comm_send_event_air_in_line(void)
     serial_comm_send("EVENT AIR_IN_LINE\n");
 }
 
+void serial_comm_send_event_high_flow(void)
+{
+    serial_comm_send("EVENT HIGH_FLOW\n");
+}
+
 /********************************************************
  * COMMAND PARSING
  ********************************************************/
@@ -343,6 +348,21 @@ void serial_comm_process_cmd(system_state_t *state, const char *cmd_line)
     if (strcmp(cmd, "STREAM OFF") == 0) {
         state->stream_enabled = false;
         serial_comm_send_ok();
+        return;
+    }
+
+    /* ---- CAL <WATER|IPA> ---- */
+    if (starts_with(cmd, "CAL ")) {
+        if (!state->sensor_available) {
+            serial_comm_send_err("SENSOR_UNAVAIL");
+            return;
+        }
+        if (state->mode == MODE_PID) {
+            serial_comm_send_err("PID_ACTIVE");
+            return;
+        }
+        const char *liquid = skip_spaces(cmd + 4);
+        app_cmd_set_calibration(state, liquid);
         return;
     }
 

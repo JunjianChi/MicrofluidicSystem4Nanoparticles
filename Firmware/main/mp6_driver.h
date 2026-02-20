@@ -42,7 +42,7 @@ extern "C" {
 /* Clock signal */
 #define MP6_CLOCK_DUTY_PERCENT  95      /*!< Clock duty cycle (%) */
 #define MP6_FREQ_MIN            25      /*!< Min driver frequency (Hz) */
-#define MP6_FREQ_MAX            226     /*!< Max driver frequency (Hz) */
+#define MP6_FREQ_MAX            300     /*!< Max driver frequency (Hz) */
 
 /********************************************************
  * DATA TYPES

@@ -183,6 +183,47 @@ void app_cmd_scan(system_state_t *state)
     serial_comm_send_scan(devices, num_found);
 }
 
+void app_cmd_set_calibration(system_state_t *state, const char *liquid)
+{
+    uint8_t cal_cmd;
+    if (strcmp(liquid, "WATER") == 0) {
+        cal_cmd = SLF3S_CALIBRATION_WATER;
+    } else if (strcmp(liquid, "IPA") == 0) {
+        cal_cmd = SLF3S_CALIBRATION_IPA;
+    } else {
+        serial_comm_send_err("INVALID_ARG");
+        return;
+    }
+
+    /* Perform I2C operations outside the mutex to avoid stalling sensor_read_task.
+     * The CAL command is already rejected during PID mode, so no concurrent
+     * sensor reads will occur (sensor_read_task only reads when sensor_available). */
+    STATE_LOCK();
+    state->sensor_available = false;  /* prevent sensor_read_task from reading */
+    STATE_UNLOCK();
+
+    /* Stop current measurement */
+    slf3s_stop_measurement(&state->flow_sensor);
+
+    /* Update calibration setting */
+    slf3s_set_calibration(&state->flow_sensor, cal_cmd);
+
+    /* Restart measurement with new calibration */
+    esp_err_t ret = slf3s_start_measurement_simple(&state->flow_sensor);
+
+    STATE_LOCK();
+    if (ret == ESP_OK) {
+        state->sensor_available = true;
+    }
+    STATE_UNLOCK();
+
+    if (ret == ESP_OK) {
+        serial_comm_send_ok();
+    } else {
+        serial_comm_send_err("SENSOR_UNAVAIL");
+    }
+}
+
 /********************************************************
  * FREERTOS TASKS
  ********************************************************/
@@ -281,6 +322,13 @@ static void sensor_read_task(void *param)
                     serial_comm_send_event_air_in_line();
                 }
                 g_state.air_in_line = air_now;
+
+                /* High-flow detection (edge-triggered: notify once on rising edge) */
+                bool high_now = (meas.flags & SLF3S_FLAG_HIGH_FLOW) != 0;
+                if (high_now && !g_state.high_flow) {
+                    serial_comm_send_event_high_flow();
+                }
+                g_state.high_flow = high_now;
                 STATE_UNLOCK();
             }
         }

@@ -55,6 +55,9 @@ struct system_state {
     /* Air-in-line detection (edge-triggered) */
     bool air_in_line;
 
+    /* High-flow detection (edge-triggered) */
+    bool high_flow;
+
     /* Hardware availability (updated by hot-plug detection) */
     bool pump_available;
     bool sensor_available;
@@ -80,6 +83,7 @@ void app_cmd_pid_target(system_state_t *state, float target);
 void app_cmd_pid_tune(system_state_t *state, float kp, float ki, float kd);
 void app_cmd_status(system_state_t *state);
 void app_cmd_scan(system_state_t *state);
+void app_cmd_set_calibration(system_state_t *state, const char *liquid);
 
 #ifdef __cplusplus
 }

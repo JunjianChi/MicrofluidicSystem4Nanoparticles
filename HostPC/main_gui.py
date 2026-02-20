@@ -45,6 +45,7 @@ class SignalBridge(QObject):
     pid_done = pyqtSignal()
     flow_err = pyqtSignal(float, float)        # target, actual
     air_in_line = pyqtSignal()                 # air bubble detected
+    high_flow = pyqtSignal()                   # flow exceeds sensor range
     log_message = pyqtSignal(str)              # raw log line
     connection_lost = pyqtSignal()             # serial port disconnected
 
@@ -229,10 +230,10 @@ class MainWindow(QMainWindow):
         freq_layout = QHBoxLayout()
         freq_layout.addWidget(QLabel("Frequency:"))
         self.slider_freq = QSlider(Qt.Horizontal)
-        self.slider_freq.setRange(25, 226)
+        self.slider_freq.setRange(25, 300)
         self.slider_freq.setValue(100)
         self.spin_freq = QSpinBox()
-        self.spin_freq.setRange(25, 226)
+        self.spin_freq.setRange(25, 300)
         self.spin_freq.setValue(100)
         freq_layout.addWidget(self.slider_freq, stretch=1)
         freq_layout.addWidget(self.spin_freq)
@@ -339,11 +340,24 @@ class MainWindow(QMainWindow):
     # --- Tools Group ---
     def _build_tools_group(self) -> QGroupBox:
         grp = QGroupBox("Tools")
-        layout = QHBoxLayout(grp)
+        layout = QVBoxLayout(grp)
+
+        btn_row = QHBoxLayout()
         self.btn_i2c_scan = QPushButton("I2C Scan")
         self.btn_status = QPushButton("STATUS")
-        layout.addWidget(self.btn_i2c_scan)
-        layout.addWidget(self.btn_status)
+        btn_row.addWidget(self.btn_i2c_scan)
+        btn_row.addWidget(self.btn_status)
+        layout.addLayout(btn_row)
+
+        cal_row = QHBoxLayout()
+        cal_row.addWidget(QLabel("Calibration:"))
+        self.combo_calibration = QComboBox()
+        self.combo_calibration.addItem("Water", "WATER")
+        self.combo_calibration.addItem("IPA", "IPA")
+        self.combo_calibration.setCurrentIndex(0)
+        cal_row.addWidget(self.combo_calibration, stretch=1)
+        layout.addLayout(cal_row)
+
         return grp
 
     # --- Chart Group ---
@@ -492,6 +506,7 @@ class MainWindow(QMainWindow):
         # Tools
         self.btn_i2c_scan.clicked.connect(self._cmd_i2c_scan)
         self.btn_status.clicked.connect(self._cmd_status)
+        self.combo_calibration.currentIndexChanged.connect(self._cmd_set_calibration)
 
         # Plot pause/resume
         self.btn_plot_pause.toggled.connect(self._on_plot_pause_toggled)
@@ -506,6 +521,7 @@ class MainWindow(QMainWindow):
         self._bridge.pid_done.connect(self._on_pid_done)
         self._bridge.flow_err.connect(self._on_flow_err)
         self._bridge.air_in_line.connect(self._on_air_in_line)
+        self._bridge.high_flow.connect(self._on_high_flow)
         self._bridge.log_message.connect(self._append_log)
         self._bridge.connection_lost.connect(self._on_connection_lost)
 
@@ -560,6 +576,7 @@ class MainWindow(QMainWindow):
         self._ctrl.on_pid_done = lambda: self._bridge.pid_done.emit()
         self._ctrl.on_flow_err = lambda t, a: self._bridge.flow_err.emit(t, a)
         self._ctrl.on_air_in_line = lambda: self._bridge.air_in_line.emit()
+        self._ctrl.on_high_flow = lambda: self._bridge.high_flow.emit()
 
         # Wrap _send_cmd_raw to log TX/RX traffic
         original_send = self._ctrl._send_cmd_raw
@@ -702,6 +719,7 @@ class MainWindow(QMainWindow):
             self.spin_pid_target, self.spin_pid_duration,
             self.spin_kp, self.spin_ki, self.spin_kd,
             self.btn_i2c_scan, self.btn_status,
+            self.combo_calibration,
             self.btn_record,
         ]:
             w.setEnabled(enabled)
@@ -740,6 +758,9 @@ class MainWindow(QMainWindow):
                 w.setEnabled(False)
             self.lbl_pump_feedback.setText("Pump: driver not detected")
             self.lbl_pump_feedback.setStyleSheet("color: red; font-weight: bold;")
+
+        if not self._sensor_available:
+            self.combo_calibration.setEnabled(False)
 
         if not self._sensor_available or not self._pump_available:
             for w in [self.btn_pid_start,
@@ -810,6 +831,9 @@ class MainWindow(QMainWindow):
                     w.setEnabled(True)
                 self.lbl_pump_feedback.setText("Pump: idle")
                 self.lbl_pump_feedback.setStyleSheet("color: gray; font-weight: bold;")
+
+            if self._sensor_available:
+                self.combo_calibration.setEnabled(True)
 
             if self._pump_available and self._sensor_available and not self._pid_running:
                 for w in [self.btn_pid_start,
@@ -985,6 +1009,19 @@ class MainWindow(QMainWindow):
 
         self.lbl_pid_elapsed.setText("")
 
+    def _cmd_set_calibration(self, _index):
+        """Send CAL command when calibration combo box changes."""
+        if not self._ctrl or not self._ctrl.is_connected:
+            return
+        liquid = self.combo_calibration.currentData()
+        ok, err = self._run_cmd(self._ctrl.set_calibration, liquid)
+        if ok:
+            self.lbl_alert.setText(f"Calibration set to {liquid}")
+            self.lbl_alert.setStyleSheet("color: #2196F3; font-weight: bold;")
+            self._append_log(f"Calibration changed to {liquid}")
+        else:
+            self._append_log(f"Calibration change failed: {err}")
+
     def _cmd_i2c_scan(self):
         ok, devices = self._run_cmd(self._ctrl.scan_i2c)
         if ok and devices is not None:
@@ -1054,6 +1091,11 @@ class MainWindow(QMainWindow):
         self.lbl_alert.setText("AIR_IN_LINE: Air bubble detected in flow path!")
         self.lbl_alert.setStyleSheet("color: #FF9800; font-weight: bold;")
         self._append_log("[EVENT] AIR_IN_LINE: Air bubble detected")
+
+    def _on_high_flow(self):
+        self.lbl_alert.setText("HIGH_FLOW: Flow rate exceeds sensor range!")
+        self.lbl_alert.setStyleSheet("color: red; font-weight: bold;")
+        self._append_log("[EVENT] HIGH_FLOW: Flow rate exceeds sensor range")
 
     # ==================================================================
     # Chart refresh & plot pause

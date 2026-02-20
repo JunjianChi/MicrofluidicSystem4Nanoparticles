@@ -124,6 +124,11 @@ void serial_comm_send_event_flow_err(float target, float actual);
 void serial_comm_send_event_air_in_line(void);
 
 /**
+ * @brief Send EVENT HIGH_FLOW notification
+ */
+void serial_comm_send_event_high_flow(void);
+
+/**
  * @brief Parse and execute a command line
  *
  * @param state     Pointer to system state

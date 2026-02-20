@@ -83,7 +83,7 @@ Two mutually exclusive modes:
 | Pump ON | `PUMP ON\n` | `OK\n` | Enable GPIO + clock start. Returns `ERR PID_ACTIVE` in PID mode. Returns `ERR PUMP_UNAVAIL` if no pump hardware. |
 | Pump OFF | `PUMP OFF\n` | `OK\n` | DAC -> 0V, enable -> LOW, clock stop. If in PID mode, auto-stops PID first. |
 | Set amplitude | `AMP <value>\n` | `OK\n` | value: 80-250. Returns `ERR PID_ACTIVE` in PID mode. |
-| Set frequency | `FREQ <value>\n` | `OK\n` | value: 25-226 Hz. Returns `ERR PID_ACTIVE` in PID mode. |
+| Set frequency | `FREQ <value>\n` | `OK\n` | value: 25-300 Hz. Returns `ERR PID_ACTIVE` in PID mode. |
 
 ### PID Control
 
@@ -100,6 +100,12 @@ Two mutually exclusive modes:
 |---------|--------|----------|-------|
 | Stream ON | `STREAM ON\n` | `OK\n` | Enable 10Hz flow data reporting (`D <flow>`) |
 | Stream OFF | `STREAM OFF\n` | `OK\n` | Disable flow data reporting |
+
+### Sensor Calibration
+
+| Command | Format | Response | Notes |
+|---------|--------|----------|-------|
+| Set calibration | `CAL <WATER\|IPA>\n` | `OK\n` | Stop measurement, switch calibration liquid, restart. Returns `ERR SENSOR_UNAVAIL` if no sensor. Returns `ERR INVALID_ARG` if not WATER or IPA. |
 
 ### Query Commands
 
@@ -142,7 +148,7 @@ Each command returns exactly one response line:
 | mode | 1 | string | `MANUAL` or `PID` |
 | pump | 2 | 0/1 | Pump state (0=OFF, 1=ON) |
 | amp | 3 | int | Current amplitude (80-250) |
-| freq | 4 | int | Current frequency (25-226 Hz) |
+| freq | 4 | int | Current frequency (25-300 Hz) |
 | flow | 5 | float | Current flow reading (ul/min) |
 | target | 6 | float | PID target flow (0.00 in MANUAL mode) |
 | elapsed | 7 | int | PID elapsed time (seconds) |
@@ -168,6 +174,8 @@ Each command returns exactly one response line:
 | Data stream | `D <flow>\n` | After `STREAM ON`, at 10Hz |
 | PID done | `EVENT PID_DONE\n` | PID duration expired, auto-stops |
 | Flow error | `EVENT FLOW_ERR <target> <actual>\n` | Sustained flow deviation from target |
+| Air in line | `EVENT AIR_IN_LINE\n` | Air bubble detected (edge-triggered, rising edge) |
+| High flow | `EVENT HIGH_FLOW\n` | Flow rate exceeds sensor range (edge-triggered, rising edge) |
 
 ## Message Classification (Host-side Dispatch)
 
@@ -178,6 +186,8 @@ Incoming line
   +-- matches ESP-IDF log regex [EWIDV] (\d+) ... -> discard (boot/debug log)
   +-- starts with "D "                            -> data stream, on_data(flow) callback
   +-- == "EVENT PID_DONE"                         -> PID done event, on_pid_done() callback
+  +-- == "EVENT AIR_IN_LINE"                      -> air bubble event, on_air_in_line() callback
+  +-- == "EVENT HIGH_FLOW"                        -> high flow event, on_high_flow() callback
   +-- starts with "EVENT FLOW_ERR"                -> flow error event, on_flow_err(tgt, act)
   +-- starts with "OK" / "ERR" / "S " / "SCAN"   -> command response (wakes waiting caller)
   +-- anything else                               -> discard (boot garbage, stale output)
@@ -361,4 +371,6 @@ Firmware/main/
 | `serial_comm_send_scan(devices, count)` | Send `SCAN <addr1> <addr2> ...\n` |
 | `serial_comm_send_event_pid_done()` | Send `EVENT PID_DONE\n` |
 | `serial_comm_send_event_flow_err(target, actual)` | Send `EVENT FLOW_ERR <target> <actual>\n` |
+| `serial_comm_send_event_air_in_line()` | Send `EVENT AIR_IN_LINE\n` |
+| `serial_comm_send_event_high_flow()` | Send `EVENT HIGH_FLOW\n` |
 | `serial_comm_process_cmd(state, cmd_line)` | Parse and execute one command |

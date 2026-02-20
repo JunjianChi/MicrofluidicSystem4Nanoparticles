@@ -29,8 +29,8 @@ static const char *TAG = "MP6";
 #define MP6_LEDC_TIMER          LEDC_TIMER_0
 #define MP6_LEDC_MODE           LEDC_LOW_SPEED_MODE
 #define MP6_LEDC_CHANNEL        LEDC_CHANNEL_0
-#define MP6_LEDC_RESOLUTION     LEDC_TIMER_13_BIT   /* 8192 steps */
-#define MP6_LEDC_MAX_DUTY       ((1 << 13) - 1)     /* 8191 */
+#define MP6_LEDC_RESOLUTION     LEDC_TIMER_10_BIT   /* 1024 steps */
+#define MP6_LEDC_MAX_DUTY       ((1 << 10) - 1)     /* 1023 */
 
 /********************************************************
  * INTERNAL: CLOCK PWM FUNCTIONS

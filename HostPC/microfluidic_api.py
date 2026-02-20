@@ -77,12 +77,14 @@ class MicrofluidicController:
         STATUS
         SCAN
         STREAM ON / STREAM OFF
+        CAL <WATER|IPA>
 
     Async messages (ESP32 -> PC):
         D <flow> <temp>             - 10Hz data stream (flow ul/min, temperature C)
         EVENT PID_DONE              - PID duration expired
         EVENT FLOW_ERR <tgt> <act>  - Sustained flow deviation
         EVENT AIR_IN_LINE           - Air bubble detected in flow path
+        EVENT HIGH_FLOW             - Flow rate exceeds sensor range
     """
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 2.0):
@@ -102,6 +104,7 @@ class MicrofluidicController:
         self.on_pid_done: Optional[Callable[[], None]] = None
         self.on_flow_err: Optional[Callable[[float, float], None]] = None
         self.on_air_in_line: Optional[Callable[[], None]] = None
+        self.on_high_flow: Optional[Callable[[], None]] = None
 
         # Response queue for synchronous command/response
         self._response_event = threading.Event()
@@ -159,9 +162,9 @@ class MicrofluidicController:
         self._send_cmd(f"AMP {value}")
 
     def set_frequency(self, freq_hz: int):
-        """Set pump frequency (25-226 Hz). Blocked during PID mode."""
-        if not 25 <= freq_hz <= 226:
-            raise ValueError(f"Frequency must be 25-226 Hz, got {freq_hz}")
+        """Set pump frequency (25-300 Hz). Blocked during PID mode."""
+        if not 25 <= freq_hz <= 300:
+            raise ValueError(f"Frequency must be 25-300 Hz, got {freq_hz}")
         self._send_cmd(f"FREQ {freq_hz}")
 
     # ------------------------------------------------------------------
@@ -193,6 +196,26 @@ class MicrofluidicController:
     def pid_tune(self, kp: float, ki: float, kd: float):
         """Set PID gains. Can be called anytime."""
         self._send_cmd(f"PID TUNE {kp:.4f} {ki:.4f} {kd:.4f}")
+
+    # ------------------------------------------------------------------
+    # Data stream
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Sensor calibration
+    # ------------------------------------------------------------------
+
+    def set_calibration(self, liquid: str):
+        """
+        Set flow sensor calibration liquid.
+
+        Args:
+            liquid: "WATER" or "IPA"
+        """
+        liquid = liquid.upper()
+        if liquid not in ("WATER", "IPA"):
+            raise ValueError(f"Liquid must be WATER or IPA, got {liquid}")
+        self._send_cmd(f"CAL {liquid}")
 
     # ------------------------------------------------------------------
     # Data stream
@@ -310,6 +333,12 @@ class MicrofluidicController:
         if line == "EVENT AIR_IN_LINE":
             if self.on_air_in_line:
                 self.on_air_in_line()
+            return
+
+        # Event: HIGH_FLOW
+        if line == "EVENT HIGH_FLOW":
+            if self.on_high_flow:
+                self.on_high_flow()
             return
 
         # Event: FLOW_ERR
