@@ -41,9 +41,10 @@ from microfluidic_api import MicrofluidicController, CommError, TimeoutError
 
 class SignalBridge(QObject):
     """Bridges MicrofluidicController callbacks to Qt signals."""
-    data_received = pyqtSignal(float)          # flow value
+    data_received = pyqtSignal(float, float)   # flow, temperature
     pid_done = pyqtSignal()
     flow_err = pyqtSignal(float, float)        # target, actual
+    air_in_line = pyqtSignal()                 # air bubble detected
     log_message = pyqtSignal(str)              # raw log line
     connection_lost = pyqtSignal()             # serial port disconnected
 
@@ -71,7 +72,7 @@ class MainWindow(QMainWindow):
 
         # Recording state
         self._recording = False
-        self._record_buf: List[Tuple[float, float]] = []  # (timestamp, flow)
+        self._record_buf: List[Tuple[float, float, float]] = []  # (timestamp, flow, temperature)
         self._record_start: float = 0.0
 
         # Hardware availability (updated after connect)
@@ -270,7 +271,7 @@ class MainWindow(QMainWindow):
 
         form = QFormLayout()
         self.spin_pid_target = QDoubleSpinBox()
-        self.spin_pid_target.setRange(0.01, 500.0)
+        self.spin_pid_target.setRange(0.01, 3250.0)
         self.spin_pid_target.setDecimals(2)
         self.spin_pid_target.setSuffix(" ul/min")
         self.spin_pid_target.setValue(10.0)
@@ -406,6 +407,7 @@ class MainWindow(QMainWindow):
         self.lbl_mode.setStyleSheet("font-weight: bold;")
         self.lbl_pump_status = QLabel("Pump: --")
         self.lbl_flow_reading = QLabel("Flow: -- ul/min")
+        self.lbl_temp_reading = QLabel("Temp: -- C")
         self.lbl_pump_hw = QLabel("Driver: --")
         self.lbl_sensor_hw = QLabel("Flow Sensor: --")
         self.lbl_pressure_hw = QLabel("Pressure: --")
@@ -414,6 +416,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.lbl_pump_status)
         layout.addWidget(QLabel(" | "))
         layout.addWidget(self.lbl_flow_reading)
+        layout.addWidget(QLabel(" | "))
+        layout.addWidget(self.lbl_temp_reading)
         layout.addWidget(QLabel(" | "))
         layout.addWidget(self.lbl_pump_hw)
         layout.addWidget(QLabel(" | "))
@@ -501,6 +505,7 @@ class MainWindow(QMainWindow):
         self._bridge.data_received.connect(self._on_data)
         self._bridge.pid_done.connect(self._on_pid_done)
         self._bridge.flow_err.connect(self._on_flow_err)
+        self._bridge.air_in_line.connect(self._on_air_in_line)
         self._bridge.log_message.connect(self._append_log)
         self._bridge.connection_lost.connect(self._on_connection_lost)
 
@@ -551,9 +556,10 @@ class MainWindow(QMainWindow):
         self._ctrl = ctrl
 
         # Install callbacks that emit Qt signals
-        self._ctrl.on_data = lambda flow: self._bridge.data_received.emit(flow)
+        self._ctrl.on_data = lambda flow, temp: self._bridge.data_received.emit(flow, temp)
         self._ctrl.on_pid_done = lambda: self._bridge.pid_done.emit()
         self._ctrl.on_flow_err = lambda t, a: self._bridge.flow_err.emit(t, a)
+        self._ctrl.on_air_in_line = lambda: self._bridge.air_in_line.emit()
 
         # Wrap _send_cmd_raw to log TX/RX traffic
         original_send = self._ctrl._send_cmd_raw
@@ -1005,7 +1011,7 @@ class MainWindow(QMainWindow):
     # Data callbacks (from SignalBridge, runs on GUI thread)
     # ==================================================================
 
-    def _on_data(self, flow: float):
+    def _on_data(self, flow: float, temperature: float):
         # Skip flow data if sensor is not available
         if not self._sensor_available:
             return
@@ -1017,12 +1023,13 @@ class MainWindow(QMainWindow):
         self._time_data.append(t)
         self._flow_data.append(flow)
 
-        # Update flow reading
+        # Update flow and temperature readings
         self.lbl_flow_reading.setText(f"Flow: {flow:.2f} ul/min")
+        self.lbl_temp_reading.setText(f"Temp: {temperature:.1f} C")
 
         # Recording
         if self._recording:
-            self._record_buf.append((now - self._record_start, flow))
+            self._record_buf.append((now - self._record_start, flow, temperature))
             n = len(self._record_buf)
             dur = now - self._record_start
             mins, secs = divmod(int(dur), 60)
@@ -1042,6 +1049,11 @@ class MainWindow(QMainWindow):
         self.lbl_alert.setText(msg)
         self.lbl_alert.setStyleSheet("color: red; font-weight: bold;")
         self._append_log(f"[EVENT] {msg}")
+
+    def _on_air_in_line(self):
+        self.lbl_alert.setText("AIR_IN_LINE: Air bubble detected in flow path!")
+        self.lbl_alert.setStyleSheet("color: #FF9800; font-weight: bold;")
+        self._append_log("[EVENT] AIR_IN_LINE: Air bubble detected")
 
     # ==================================================================
     # Chart refresh & plot pause
@@ -1085,6 +1097,7 @@ class MainWindow(QMainWindow):
         self.lbl_pump_status.setText(f"Pump: {pump_str}")
         self.lbl_pump_status.setStyleSheet(f"color: {color}; font-weight: bold;")
         self.lbl_flow_reading.setText(f"Flow: {status.current_flow:.2f} ul/min")
+        self.lbl_temp_reading.setText(f"Temp: {status.current_temperature:.1f} C")
 
         # PID elapsed
         if status.mode == "PID":
@@ -1140,7 +1153,7 @@ class MainWindow(QMainWindow):
         try:
             with open(path, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow(["time_s", "flow_ul_min"])
+                writer.writerow(["time_s", "flow_ul_min", "temperature_c"])
                 writer.writerows(self._record_buf)
             self._append_log(f"Exported {len(self._record_buf)} samples to {path}")
             QMessageBox.information(self, "Export", f"Saved {len(self._record_buf)} samples.")

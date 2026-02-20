@@ -330,10 +330,11 @@ static void sensor_read_task(void *param)
 
         /* Send data stream if enabled */
         bool stream = g_state.stream_enabled;
+        float temp = g_state.current_temperature;
         STATE_UNLOCK();
 
         if (stream) {
-            serial_comm_send_data(flow, g_state.current_temperature);
+            serial_comm_send_data(flow, temp);
         }
     }
 }

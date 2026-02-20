@@ -27,10 +27,10 @@ menu "Custom Configuration"
                 Select the SLF3S flow sensor model.
 
             config FLOW_SENSOR_0600F
-                bool "SLF3S-0600F (0-600 µl/min)"
+                bool "SLF3S-0600F (±3250 µl/min)"
                 help
-                    Select SLF3S-0600F model with 0-600 µl/min range.
-                    Scale factor: 10000
+                    Select SLF3S-0600F model with ±3250 µl/min output range.
+                    Scale factor: 10
 
             config FLOW_SENSOR_1300F
                 bool "SLF3S-1300F (0-40 ml/min)"

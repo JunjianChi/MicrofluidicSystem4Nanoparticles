@@ -45,6 +45,7 @@ class SystemStatus:
     pump_available: bool
     sensor_available: bool
     pressure_available: bool
+    current_temperature: float
 
 
 class CommError(Exception):
@@ -78,9 +79,10 @@ class MicrofluidicController:
         STREAM ON / STREAM OFF
 
     Async messages (ESP32 -> PC):
-        D <flow>                    - 10Hz data stream
+        D <flow> <temp>             - 10Hz data stream (flow ul/min, temperature C)
         EVENT PID_DONE              - PID duration expired
         EVENT FLOW_ERR <tgt> <act>  - Sustained flow deviation
+        EVENT AIR_IN_LINE           - Air bubble detected in flow path
     """
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 2.0):
@@ -335,7 +337,7 @@ class MicrofluidicController:
 
     @staticmethod
     def _parse_status(line: str) -> SystemStatus:
-        """Parse: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw>"""
+        """Parse: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw> <temp>"""
         parts = line.split()
         if len(parts) < 9 or parts[0] != "S":
             raise CommError(f"Invalid STATUS response: {line}")
@@ -351,6 +353,7 @@ class MicrofluidicController:
             pump_available=(parts[9] == "1") if len(parts) > 9 else True,
             sensor_available=(parts[10] == "1") if len(parts) > 10 else True,
             pressure_available=(parts[11] == "1") if len(parts) > 11 else False,
+            current_temperature=float(parts[12]) if len(parts) > 12 else 0.0,
         )
 
     # ------------------------------------------------------------------
@@ -375,8 +378,8 @@ if __name__ == "__main__":
 
     port = sys.argv[1] if len(sys.argv) > 1 else "COM3"
 
-    def on_data(flow):
-        print(f"  Flow: {flow:.2f} ul/min")
+    def on_data(flow, temperature):
+        print(f"  Flow: {flow:.2f} ul/min, Temp: {temperature:.1f} C")
 
     def on_pid_done():
         print("  [EVENT] PID_DONE")
