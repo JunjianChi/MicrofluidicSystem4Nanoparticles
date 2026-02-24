@@ -13,6 +13,7 @@ from __future__ import annotations
 import sys
 import csv
 import time
+import threading
 from collections import deque
 from datetime import datetime
 from typing import Optional, List, Tuple
@@ -40,7 +41,15 @@ from microfluidic_api import MicrofluidicController, CommError, TimeoutError
 # ---------------------------------------------------------------------------
 
 class SignalBridge(QObject):
-    """Bridges MicrofluidicController callbacks to Qt signals."""
+    """Bridges MicrofluidicController callbacks to Qt signals.
+
+    MicrofluidicController callbacks fire on a background listener thread.
+    Qt widgets must only be updated from the main GUI thread.  SignalBridge
+    converts each callback into a pyqtSignal emission, which Qt delivers
+    to connected slots on the GUI thread via the event loop.
+
+    Usage: controller.on_data = lambda f, t: bridge.data_received.emit(f, t)
+    """
     data_received = pyqtSignal(float, float)   # flow, temperature
     pid_done = pyqtSignal()
     flow_err = pyqtSignal(float, float)        # target, actual
@@ -48,6 +57,8 @@ class SignalBridge(QObject):
     high_flow = pyqtSignal()                   # flow exceeds sensor range
     log_message = pyqtSignal(str)              # raw log line
     connection_lost = pyqtSignal()             # serial port disconnected
+    status_received = pyqtSignal(object)       # SystemStatus from background poll
+    hw_scan_result = pyqtSignal(object)        # list of I2C addresses from background scan
 
 
 # ---------------------------------------------------------------------------
@@ -88,9 +99,20 @@ class MainWindow(QMainWindow):
         # Plot pause state
         self._plot_paused = False
 
+        # Guards to prevent overlapping background polls
+        self._status_busy = False
+        self._hw_scan_busy = False
+
         # --- Build UI ---
         self._build_ui()
         self._connect_signals()
+
+        # ---- Timers overview ----
+        # chart    100ms  - refresh pyqtgraph flow/pressure curves
+        # status   1s     - poll STATUS command for elapsed time, mode sync
+        # conn     2s     - detect unexpected serial disconnect (USB unplug)
+        # hw_scan  5s     - re-scan I2C bus for hot-plugged devices
+        # debounce 150ms  - delay slider AMP/FREQ commands to avoid flooding
 
         # Chart refresh timer (100ms = 10Hz)
         self._chart_timer = QTimer(self)
@@ -119,6 +141,17 @@ class MainWindow(QMainWindow):
         self._freq_debounce.setSingleShot(True)
         self._freq_debounce.setInterval(150)
         self._freq_debounce.timeout.connect(self._cmd_set_frequency)
+
+        # Debounce timers for live PID tuning (300ms - slower to avoid flooding)
+        self._pid_gains_debounce = QTimer(self)
+        self._pid_gains_debounce.setSingleShot(True)
+        self._pid_gains_debounce.setInterval(300)
+        self._pid_gains_debounce.timeout.connect(self._cmd_live_pid_tune)
+
+        self._pid_target_debounce = QTimer(self)
+        self._pid_target_debounce.setSingleShot(True)
+        self._pid_target_debounce.setInterval(300)
+        self._pid_target_debounce.timeout.connect(self._cmd_live_pid_target)
 
         # Initial UI state
         self._set_controls_enabled(False)
@@ -272,8 +305,8 @@ class MainWindow(QMainWindow):
 
         form = QFormLayout()
         self.spin_pid_target = QDoubleSpinBox()
-        self.spin_pid_target.setRange(0.01, 3250.0)
-        self.spin_pid_target.setDecimals(2)
+        self.spin_pid_target.setRange(1, 3250.0)
+        self.spin_pid_target.setDecimals(0)
         self.spin_pid_target.setSuffix(" ul/min")
         self.spin_pid_target.setValue(10.0)
         form.addRow("Target:", self.spin_pid_target)
@@ -381,8 +414,10 @@ class MainWindow(QMainWindow):
 
         # --- Flow Rate chart ---
         self.flow_plot = pg.PlotWidget()
-        self.flow_plot.setLabel("left", "Flow Rate", units="ul/min")
-        self.flow_plot.setLabel("bottom", "Time", units="s")
+        self.flow_plot.setLabel("left", "Flow Rate (ul/min)")
+        self.flow_plot.setLabel("bottom", "Time (s)")
+        self.flow_plot.getAxis("left").enableAutoSIPrefix(False)
+        self.flow_plot.getAxis("bottom").enableAutoSIPrefix(False)
         self.flow_plot.showGrid(x=True, y=True, alpha=0.3)
         self.flow_plot.enableAutoRange(axis='y')
 
@@ -398,8 +433,10 @@ class MainWindow(QMainWindow):
 
         # --- Pressure chart ---
         self.pressure_plot = pg.PlotWidget()
-        self.pressure_plot.setLabel("left", "Pressure", units="mbar")
-        self.pressure_plot.setLabel("bottom", "Time", units="s")
+        self.pressure_plot.setLabel("left", "Pressure (mbar)")
+        self.pressure_plot.setLabel("bottom", "Time (s)")
+        self.pressure_plot.getAxis("left").enableAutoSIPrefix(False)
+        self.pressure_plot.getAxis("bottom").enableAutoSIPrefix(False)
         self.pressure_plot.showGrid(x=True, y=True, alpha=0.3)
         self.pressure_plot.enableAutoRange(axis='y')
 
@@ -502,6 +539,10 @@ class MainWindow(QMainWindow):
         # PID mode
         self.btn_pid_start.clicked.connect(self._cmd_pid_start)
         self.btn_pid_stop.clicked.connect(self._cmd_pid_stop)
+        self.spin_kp.valueChanged.connect(self._on_pid_gains_changed)
+        self.spin_ki.valueChanged.connect(self._on_pid_gains_changed)
+        self.spin_kd.valueChanged.connect(self._on_pid_gains_changed)
+        self.spin_pid_target.valueChanged.connect(self._on_pid_target_changed)
 
         # Tools
         self.btn_i2c_scan.clicked.connect(self._cmd_i2c_scan)
@@ -524,6 +565,8 @@ class MainWindow(QMainWindow):
         self._bridge.high_flow.connect(self._on_high_flow)
         self._bridge.log_message.connect(self._append_log)
         self._bridge.connection_lost.connect(self._on_connection_lost)
+        self._bridge.status_received.connect(self._update_status_display)
+        self._bridge.hw_scan_result.connect(self._on_hw_scan_result)
 
     # ==================================================================
     # Mode switching
@@ -781,17 +824,30 @@ class MainWindow(QMainWindow):
 
     def _periodic_hw_scan(self):
         """Re-scan I2C bus to detect newly connected/disconnected sensors."""
-        if not self._ctrl or not self._ctrl.is_connected:
+        if not self._ctrl or not self._ctrl.is_connected or self._hw_scan_busy:
             return
+        self._hw_scan_busy = True
+        threading.Thread(target=self._hw_scan_bg, daemon=True).start()
+
+    def _hw_scan_bg(self):
+        """Background thread: run I2C scan without blocking GUI."""
+        try:
+            ctrl = self._ctrl
+            if ctrl and ctrl.is_connected:
+                devices = ctrl.scan_i2c()
+                self._bridge.hw_scan_result.emit(devices)
+            else:
+                self._hw_scan_busy = False
+        except (CommError, TimeoutError, ConnectionError):
+            self._hw_scan_busy = False
+
+    def _on_hw_scan_result(self, devices):
+        """Process I2C scan results on GUI thread (slot for hw_scan_result signal)."""
+        self._hw_scan_busy = False
 
         MCP4726_ADDR = 0x61
         SLF3S_ADDR = 0x08
         PRESSURE_ADDR = 0x76
-
-        try:
-            devices = self._ctrl.scan_i2c()
-        except (CommError, TimeoutError, ConnectionError):
-            return  # scan failed, skip this cycle
 
         pump_now = MCP4726_ADDR in devices
         sensor_now = SLF3S_ADDR in devices
@@ -910,10 +966,59 @@ class MainWindow(QMainWindow):
             self._freq_debounce.start()
 
     def _cmd_set_amplitude(self):
-        self._run_cmd(self._ctrl.set_amplitude, self.spin_amp.value())
+        if not self._ctrl or not self._ctrl.is_connected:
+            return
+        val = self.spin_amp.value()
+        threading.Thread(target=self._bg_cmd, args=(self._ctrl.set_amplitude, val), daemon=True).start()
 
     def _cmd_set_frequency(self):
-        self._run_cmd(self._ctrl.set_frequency, self.spin_freq.value())
+        if not self._ctrl or not self._ctrl.is_connected:
+            return
+        val = self.spin_freq.value()
+        threading.Thread(target=self._bg_cmd, args=(self._ctrl.set_frequency, val), daemon=True).start()
+
+    def _on_pid_gains_changed(self, _value):
+        """Kp/Ki/Kd spinbox changed — debounce then send PID TUNE if PID is running."""
+        if self._pid_running and self._ctrl and self._ctrl.is_connected:
+            self._pid_gains_debounce.start()
+
+    def _on_pid_target_changed(self, _value):
+        """Target spinbox changed — debounce then send PID TARGET if PID is running."""
+        if self._pid_running and self._ctrl and self._ctrl.is_connected:
+            self._pid_target_debounce.start()
+
+    def _cmd_live_pid_tune(self):
+        """Send PID TUNE with current gains (called after debounce)."""
+        if not self._pid_running or not self._ctrl or not self._ctrl.is_connected:
+            return
+        kp = self.spin_kp.value()
+        ki = self.spin_ki.value()
+        kd = self.spin_kd.value()
+        threading.Thread(
+            target=self._bg_cmd, args=(self._ctrl.pid_tune, kp, ki, kd), daemon=True
+        ).start()
+        self._append_log(f"[PID] Live tune: Kp={kp}, Ki={ki}, Kd={kd}")
+
+    def _cmd_live_pid_target(self):
+        """Send PID TARGET with current target value (called after debounce)."""
+        if not self._pid_running or not self._ctrl or not self._ctrl.is_connected:
+            return
+        target = self.spin_pid_target.value()
+        threading.Thread(
+            target=self._bg_cmd, args=(self._ctrl.pid_set_target, target), daemon=True
+        ).start()
+        # Update chart target line
+        self._pid_target = target
+        self.target_line.setValue(target)
+        self.lbl_pid_feedback.setText(f"PID: running (target={target:.2f} ul/min)")
+        self._append_log(f"[PID] Live target: {target:.2f} ul/min")
+
+    def _bg_cmd(self, func, *args):
+        """Run a controller command in background (fire-and-forget)."""
+        try:
+            func(*args)
+        except (CommError, TimeoutError, ConnectionError, ValueError) as e:
+            self._bridge.log_message.emit(f"[ERROR] {e}")
 
     def _cmd_pid_start(self):
         target = self.spin_pid_target.value()
@@ -958,11 +1063,8 @@ class MainWindow(QMainWindow):
 
             self.btn_pid_start.setEnabled(False)
             self.btn_pid_stop.setEnabled(True)
-            self.spin_pid_target.setEnabled(False)
+            # Duration cannot change while running; target and gains can be live-tuned
             self.spin_pid_duration.setEnabled(False)
-            self.spin_kp.setEnabled(False)
-            self.spin_ki.setEnabled(False)
-            self.spin_kd.setEnabled(False)
 
             # Prevent switching to manual during PID
             self.combo_mode.setEnabled(False)
@@ -1124,13 +1226,22 @@ class MainWindow(QMainWindow):
     # ==================================================================
 
     def _poll_status(self):
-        if not self._ctrl or not self._ctrl.is_connected:
+        if not self._ctrl or not self._ctrl.is_connected or self._status_busy:
             return
+        self._status_busy = True
+        threading.Thread(target=self._poll_status_bg, daemon=True).start()
+
+    def _poll_status_bg(self):
+        """Background thread: fetch STATUS without blocking GUI."""
         try:
-            status = self._ctrl.get_status()
-            self._update_status_display(status)
+            ctrl = self._ctrl
+            if ctrl and ctrl.is_connected:
+                status = ctrl.get_status()
+                self._bridge.status_received.emit(status)
         except (CommError, TimeoutError, ConnectionError):
             pass
+        finally:
+            self._status_busy = False
 
     def _update_status_display(self, status):
         self.lbl_mode.setText(f"Mode: {status.mode}")

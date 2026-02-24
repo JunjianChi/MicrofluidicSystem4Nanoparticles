@@ -6,8 +6,17 @@
  * @brief       MCP4726 DAC driver
  *
  * @details
- *  12-bit DAC, Vref = VDD = 5V.
+ *  12-bit DAC, Vref = VDD.
  *  bit / 4096 = Vout / VDD  =>  bit = Vout / VDD * 4096
+ *
+ *  VDD calibration: The nominal VDD is 5.0V, but measured supply is 4.734V.
+ *  Using the measured value (MCP4726_VDD = 4.734) ensures accurate voltage
+ *  output.  If your power supply differs, update MCP4726_VDD accordingly.
+ *
+ *  I2C implementation note: This driver uses the low-level i2c_cmd_link API
+ *  (driver/i2c.h) rather than i2c_interface_write(), because the MCP4726
+ *  requires ACK checking to be disabled on data bytes to match the Arduino
+ *  Wire library behavior used in the reference implementation.
  *
  * SPDX-License-Identifier: MIT
  ********************************************************/

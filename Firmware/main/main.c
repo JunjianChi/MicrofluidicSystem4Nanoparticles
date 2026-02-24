@@ -6,12 +6,40 @@
  * @brief       Main application - FreeRTOS multi-task microfluidic control
  *
  * @details
- *  - Hardware initialization (I2C, pump, flow sensor, UART)
- *  - FreeRTOS tasks:
- *    - serial_cmd_task:    Parse commands from PC
- *    - sensor_read_task:   10Hz sensor reading + data stream
- *    - pid_control_task:   PID computation (when in PID mode)
- *  - Global system state management
+ *  RTOS Architecture
+ *  =================
+ *  Two FreeRTOS tasks share a single system_state_t (g_state) protected by
+ *  a mutex (STATE_LOCK / STATE_UNLOCK):
+ *
+ *    serial_cmd_task  (priority 5, stack 4096)
+ *      - Blocks on UART, parses ASCII commands, dispatches to app_cmd_* handlers
+ *      - Lower priority so it yields to sensor sampling
+ *
+ *    sensor_read_task (priority 6, stack 4096)
+ *      - Runs every 100ms (vTaskDelayUntil) for consistent 10Hz sampling
+ *      - Reads SLF3S flow + temperature + flags
+ *      - Edge-detects AIR_IN_LINE and HIGH_FLOW (events on 0->1 transition)
+ *      - In PID mode: pid_compute() -> mp6_set_amplitude() every 100ms
+ *      - Checks PID flow deviation (>20% for >10s -> FLOW_ERR event)
+ *      - Checks PID duration expiry (auto-stop -> PID_DONE event)
+ *      - Sends data stream "D <flow> <temp>" when stream_enabled is true
+ *      - Every 5s: re-probes I2C bus for unavailable devices (hot-plug)
+ *
+ *  Why sensor_read_task has higher priority:
+ *    Guarantees 10Hz sampling is not delayed by serial command processing.
+ *    Long-running commands (I2C scan, calibration switch) could otherwise
+ *    block sensor reads for hundreds of milliseconds.
+ *
+ *  Module dependency graph:
+ *    main.c
+ *      +-- main.h            (system state definition)
+ *      +-- i2c_interface.h   (I2C bus init, probe, scan)
+ *      +-- mcp4726_dac.h     (DAC test/init)
+ *      +-- mp6_driver.h      (pump control)
+ *      +-- SLF3S_flow_sensor.h (flow/temp/flags read)
+ *      +-- sensor_config.h   (pin assignments, I2C addresses)
+ *      +-- pid_controller.h  (PID compute)
+ *      +-- serial_comm.h     (UART command parsing, data/event output)
  *
  * SPDX-License-Identifier: MIT
  ********************************************************/
@@ -41,7 +69,11 @@ static const char *TAG = "MAIN";
 static system_state_t g_state;
 static SemaphoreHandle_t g_state_mutex;
 
-/* Mutex helpers */
+/*
+ * Mutex helpers.  All reads/writes to g_state must be wrapped in
+ * STATE_LOCK / STATE_UNLOCK.  portMAX_DELAY means the take will
+ * never time out (guaranteed acquire).
+ */
 #define STATE_LOCK()    xSemaphoreTake(g_state_mutex, portMAX_DELAY)
 #define STATE_UNLOCK()  xSemaphoreGive(g_state_mutex)
 
@@ -67,6 +99,19 @@ static SemaphoreHandle_t g_state_mutex;
  * Called by serial_comm_process_cmd() within serial_cmd_task.
  * g_state_mutex is NOT held when these are called - they
  * must lock as needed.
+ *
+ * Handler summary:
+ *   app_cmd_pump_on()         - mp6_start, pump_on = true
+ *   app_cmd_pump_off()        - mp6_stop, pump_on = false
+ *   app_cmd_set_amplitude()   - mp6_set_amplitude, update state
+ *   app_cmd_set_frequency()   - mp6_set_frequency, update state
+ *   app_cmd_pid_start()       - auto-start pump, pid_start, switch to MODE_PID
+ *   app_cmd_pid_stop()        - pid_stop, mp6_stop, switch to MODE_MANUAL
+ *   app_cmd_pid_target()      - pid_set_target (update target while running)
+ *   app_cmd_pid_tune()        - pid_set_gains (Kp, Ki, Kd)
+ *   app_cmd_status()          - serial_comm_send_status (12-field response)
+ *   app_cmd_scan()            - i2c_interface_scan + serial_comm_send_scan
+ *   app_cmd_set_calibration() - stop measurement, switch cal, restart
  ********************************************************/
 
 void app_cmd_pump_on(system_state_t *state)
@@ -336,7 +381,13 @@ static void sensor_read_task(void *param)
         STATE_LOCK();
         g_state.current_flow = flow;
 
-        /* PID compute if in PID mode */
+        /*
+         * PID closed-loop control (runs every 100ms when in PID mode):
+         *   1. pid_compute(measured_flow, dt) -> output amplitude (80-250)
+         *   2. mp6_set_amplitude(output)      -> update pump drive voltage
+         *   3. pid_check_flow_deviation()     -> send FLOW_ERR if >20% off for >10s
+         *   4. Every 1s: pid_tick_second()    -> check duration expiry -> PID_DONE
+         */
         if (g_state.mode == MODE_PID && g_state.pid.is_running) {
             float output = pid_compute(&g_state.pid, flow, dt);
             uint16_t amp = (uint16_t)(output + 0.5f);  /* Round to nearest int */
@@ -389,6 +440,12 @@ static void sensor_read_task(void *param)
 
 /********************************************************
  * HARDWARE INITIALIZATION
+ *
+ * Non-fatal design: hw_init() always returns ESP_OK.
+ * Any hardware that fails to probe or init is simply marked
+ * unavailable (pump_available / sensor_available / pressure_available
+ * remain false).  Tasks always start regardless of hardware state.
+ * Missing devices are re-probed every 5s by sensor_read_task.
  ********************************************************/
 
 static esp_err_t hw_init(void)

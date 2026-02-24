@@ -7,7 +7,7 @@
  *
  * @details
  *  Uses mcp4726_dac module for amplitude control.
- *  Clock signal via LEDC PWM (95% duty cycle, 25-226 Hz).
+ *  Clock signal via LEDC PWM (95% duty cycle, 25-300 Hz).
  *  Enable/shutdown via GPIO.
  *
  * SPDX-License-Identifier: MIT

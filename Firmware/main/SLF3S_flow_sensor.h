@@ -37,9 +37,9 @@ extern "C" {
 #define SLF3S_SCALE_FACTOR_0600     10.0f
 #define SLF3S_TEMP_SCALE_FACTOR     200.0f  /*!< Temperature scale factor (°C) */
 
-/* Calibration Command Bytes */
-#define SLF3S_CALIBRATION_WATER     0x08
-#define SLF3S_CALIBRATION_IPA       0x15
+/* Calibration Command Bytes (sent as part of the start-measurement I2C command) */
+#define SLF3S_CALIBRATION_WATER     0x08    /*!< Water calibration (default) */
+#define SLF3S_CALIBRATION_IPA       0x15    /*!< Isopropanol (IPA) calibration */
 
 /* Signaling flags bit masks */
 #define SLF3S_FLAG_AIR_IN_LINE      (1 << 0)
@@ -75,7 +75,11 @@ typedef struct {
 esp_err_t slf3s_init(slf3s_handle_t *handle);
 
 /**
- * @brief Start continuous flow measurement
+ * @brief Start continuous flow measurement (full initialization)
+ *
+ * Full sequence: stop measurement -> read product number -> verify model ->
+ * soft reset -> start measurement.  Automatically detects sensor model and
+ * sets the correct scale factor.  Used at boot.
  *
  * @param handle Pointer to flow sensor handle
  * @return esp_err_t ESP_OK on success, error code otherwise
@@ -83,7 +87,11 @@ esp_err_t slf3s_init(slf3s_handle_t *handle);
 esp_err_t slf3s_start_measurement(slf3s_handle_t *handle);
 
 /**
- * @brief Start continuous flow measurement (simplified version)
+ * @brief Start continuous flow measurement (simplified, skip product ID)
+ *
+ * Sequence: soft reset -> start measurement.
+ * Skips product identification; reuses the existing scale factor.
+ * Used after calibration switching (CAL WATER/IPA) and for hot-plug recovery.
  *
  * @param handle Pointer to flow sensor handle
  * @return esp_err_t ESP_OK on success, error code otherwise

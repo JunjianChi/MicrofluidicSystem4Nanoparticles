@@ -223,14 +223,11 @@ Source: [mp-bt product page](https://darwin-microfluidics.com/products/mp-bt-bub
 ```
 SensorCDT_Microfluidic_Project/
 ├── README.md                          # This file - system tutorial and guide
-├── overview.md                        # System design overview (Chinese)
-├── implement.md                       # Implementation notes (Chinese)
 ├── API.md                             # Serial protocol specification (English)
 │
 ├── Firmware/                          # ESP32 firmware (ESP-IDF project)
 │   ├── CMakeLists.txt                 # Top-level CMake build file
 │   ├── sdkconfig                      # ESP-IDF build configuration
-│   ├── README.md                      # Firmware-specific notes
 │   │
 │   └── main/                          # Firmware source code
 │       ├── CMakeLists.txt             # Component CMake file
@@ -500,19 +497,18 @@ The ESP32 firmware communicates via UART0 at **115200 baud, 8N1, ASCII, newline-
 
 | Command | Format | Response | Notes |
 |---------|--------|----------|-------|
-| Pump ON | `PUMP ON` | `OK` | Manual mode only. `ERR PID_ACTIVE` if PID running. `ERR PUMP_UNAVAIL` if no pump HW. |
-| Pump OFF | `PUMP OFF` | `OK` | Auto-stops PID if in PID mode. |
-| Set amplitude | `AMP <80-250>` | `OK` | Manual mode only. |
-| Set frequency | `FREQ <25-300>` | `OK` | Manual mode only. Value in Hz. |
-| PID start | `PID START <target> <duration>` | `OK` | target: ul/min (>0). duration: seconds (0=infinite). Requires pump + sensor. |
-| PID stop | `PID STOP` | `OK` | Stops PID, returns to MANUAL, pump stops. |
-| PID target | `PID TARGET <value>` | `OK` | Update target while running. `ERR NOT_PID_MODE` if not in PID. |
-| PID tune | `PID TUNE <Kp> <Ki> <Kd>` | `OK` | Set PID gains. Works in any mode. |
-| Status | `STATUS` | `S <fields...>` | See STATUS response format below. |
-| I2C scan | `SCAN` | `SCAN [addr...]` | Returns detected I2C addresses (hex). |
-| Stream ON | `STREAM ON` | `OK` | Enable 10 Hz data stream. |
-| Stream OFF | `STREAM OFF` | `OK` | Disable data stream. |
-| Calibration | `CAL <WATER\|IPA>` | `OK` | Switch flow sensor calibration liquid. |
+| Pump ON | `PUMP ON` | `OK` | Manual mode only |
+| Pump OFF | `PUMP OFF` | `OK` | Auto-stops PID if active |
+| Set amplitude | `AMP <80-250>` | `OK` | Manual mode only |
+| Set frequency | `FREQ <25-300>` | `OK` | Manual mode only (Hz) |
+| PID start | `PID START <target> <duration>` | `OK` | Requires pump + sensor |
+| PID stop | `PID STOP` | `OK` | Returns to MANUAL |
+| PID target | `PID TARGET <value>` | `OK` | Update while running |
+| PID tune | `PID TUNE <Kp> <Ki> <Kd>` | `OK` | Set gains |
+| Status | `STATUS` | `S <fields...>` | 12-field status line |
+| I2C scan | `SCAN` | `SCAN [addr...]` | Hex addresses |
+| Stream ON/OFF | `STREAM ON` / `STREAM OFF` | `OK` | 10 Hz data toggle |
+| Calibration | `CAL <WATER\|IPA>` | `OK` | Switch calibration liquid |
 
 ### ESP32 -> PC Async Events
 
@@ -524,39 +520,7 @@ The ESP32 firmware communicates via UART0 at **115200 baud, 8N1, ASCII, newline-
 | Air in line | `EVENT AIR_IN_LINE` | Air bubble detected (edge-triggered) |
 | High flow | `EVENT HIGH_FLOW` | Flow exceeds sensor range (edge-triggered) |
 
-### STATUS Response Format
-
-```
-S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw> <temp>
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| mode | string | `MANUAL` or `PID` |
-| pump | 0/1 | Pump state (0=OFF, 1=ON) |
-| amp | int | Current amplitude (80-250) |
-| freq | int | Current frequency (25-300 Hz) |
-| flow | float | Current flow reading (ul/min) |
-| target | float | PID target (0.00 in MANUAL) |
-| elapsed | int | PID elapsed seconds |
-| duration | int | PID set duration (0=infinite) |
-| pump_hw | 0/1 | Pump driver detected |
-| sensor_hw | 0/1 | Flow sensor detected |
-| pressure_hw | 0/1 | Pressure sensor detected |
-| temp | float | Current temperature (C) |
-
-### Error Codes
-
-| Code | Meaning |
-|------|---------|
-| `UNKNOWN_CMD` | Unrecognized command |
-| `INVALID_ARG` | Argument out of range or wrong format |
-| `PID_ACTIVE` | Command blocked during PID mode |
-| `NOT_PID_MODE` | `PID TARGET` sent when not in PID mode |
-| `PUMP_UNAVAIL` | Pump hardware (DAC at 0x61) not detected |
-| `SENSOR_UNAVAIL` | Flow sensor (0x08) not detected |
-
-For the full protocol specification, see [API.md](API.md).
+For the full protocol specification (STATUS field details, error codes, etc.), see [API.md](API.md).
 
 ---
 
@@ -586,21 +550,12 @@ For the full protocol specification, see [API.md](API.md).
 
 ### FreeRTOS Tasks
 
-**serial_cmd_task (priority 5)**
-- Blocks on UART, waiting for commands from the host PC
-- Parses each command and calls the appropriate handler
-- Each handler acquires the state mutex (`STATE_LOCK`) before modifying shared state
-- Rejects manual control commands during PID mode (`ERR PID_ACTIVE`)
+| Task | Priority | Role |
+|------|----------|------|
+| `serial_cmd_task` | 5 | Blocks on UART, parses commands, dispatches to handlers |
+| `sensor_read_task` | 6 (higher) | 10 Hz sensor sampling, PID compute, data stream, hot-plug re-probe (5s) |
 
-**sensor_read_task (priority 6, higher priority)**
-- Runs every 100 ms (`vTaskDelayUntil`) for consistent 10 Hz sampling
-- Reads flow, temperature, and flags from the SLF3S sensor
-- Edge-detects `AIR_IN_LINE` and `HIGH_FLOW` flags (only sends event on 0->1 transition)
-- In PID mode: computes PID output and sets pump amplitude
-- Checks PID flow deviation (>20% for >10s -> `FLOW_ERR` event)
-- Checks PID duration expiry (auto-stop -> `PID_DONE` event)
-- Sends data stream (`D <flow> <temp>`) if streaming is enabled
-- Every 5 seconds: re-probes I2C bus for unavailable devices (hot-plug detection)
+Sensor task has higher priority to guarantee consistent 10 Hz sampling even when serial commands are processing. Both tasks share `g_state` via a FreeRTOS mutex. See `main.c` header comments for full RTOS architecture details.
 
 ### Closed-Loop Control
 
@@ -614,26 +569,13 @@ Setpoint (ul/min) ──►(+)──► PID Controller ──► Pump Amplitude 
                               (10 Hz sampling)
 ```
 
-- PID output maps directly to `mp6_set_amplitude()` (range 80-250)
-- Frequency is fixed when PID starts; only amplitude is adjusted
-- Anti-windup: integral term clamped to +/-500
-- Output clamped to PID_OUTPUT_MIN (80) - PID_OUTPUT_MAX (250)
+- PID only adjusts amplitude; frequency is fixed when PID starts
+- Anti-windup: integral clamped to +/-500, output clamped to 80-250
 
 ### Host PC Software
 
-**microfluidic_api.py** -- Thread-safe Python API wrapping the serial protocol:
-- Background listener thread reads UART continuously
-- Dispatches `D` lines to `on_data(flow, temperature)` callback
-- Dispatches `EVENT` lines to corresponding callbacks (`on_pid_done`, `on_flow_err`, `on_air_in_line`, `on_high_flow`)
-- Filters ESP-IDF log lines (regex: `[EWIDV] (\d+) ...`) and boot garbage
-- Synchronous command/response with 2-second timeout
-
-**main_gui.py** -- PyQt5 GUI application:
-- `SignalBridge` class converts API callbacks (background thread) to Qt signals (GUI thread)
-- Split layout: left panel (controls) + right panel (charts, status, log)
-- `QStackedWidget` switches between Manual and PID control pages
-- `pyqtgraph` for real-time 10 Hz chart updates
-- Timers: chart refresh (100 ms), status poll (1s), connection check (2s), hardware scan (5s), slider debounce (150 ms)
+- **microfluidic_api.py** -- Thread-safe serial API with background listener and callbacks
+- **main_gui.py** -- PyQt5 GUI (manual/PID control, real-time charts, data recording, alerts)
 
 For detailed GUI documentation, see [HostPC/README.md](HostPC/README.md).
 

@@ -168,6 +168,20 @@ void serial_comm_send_event_high_flow(void)
 
 /********************************************************
  * COMMAND PARSING
+ *
+ * Command validation quick-reference (12 commands):
+ *   PUMP ON         - requires pump_available, rejects if PID mode
+ *   PUMP OFF        - requires pump_available (auto PID STOP if PID mode)
+ *   AMP <80-250>    - requires pump_available, rejects if PID mode, range check
+ *   FREQ <25-300>   - requires pump_available, rejects if PID mode, range check
+ *   PID START <t><d>- requires pump + sensor available, target > 0
+ *   PID STOP        - unconditional
+ *   PID TARGET <v>  - requires MODE_PID, value > 0
+ *   PID TUNE <K>    - requires 3 float args
+ *   STATUS          - unconditional
+ *   SCAN            - unconditional
+ *   STREAM ON/OFF   - unconditional
+ *   CAL <WATER|IPA> - requires sensor_available, rejects if PID mode
  ********************************************************/
 
 /* Helper: skip leading spaces and return pointer to next token */

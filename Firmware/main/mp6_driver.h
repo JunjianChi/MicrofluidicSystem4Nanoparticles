@@ -6,14 +6,20 @@
  * @brief       MP6 micropump driver via MP-Driver board
  *
  * @details
- *  Control interface:
- *    1. Amplitude: ESP32 --I2C--> MCP4726 DAC --Vout(0.35~1.3V)--> MP-Driver
- *    2. Frequency: ESP32 --GPIO PWM(95% duty)--> MP-Driver clock
- *    3. Enable:    ESP32 --GPIO--> MP-Driver shutdown (HIGH=run)
+ *  Control chain:
+ *    ESP32 --I2C--> MCP4726 DAC --Vout(0.35~1.3V)--> MP-Driver AMP --> P+/P- high-voltage AC --> MP6
+ *    ESP32 --GPIO27 PWM(95% duty)--> MP-Driver CLK
+ *    ESP32 --GPIO14 HIGH/LOW--> MP-Driver Enable
  *
  *  Amplitude mapping:
  *    amplitude 80  -> 0.35V -> DAC 287
  *    amplitude 250 -> 1.30V -> DAC 1065
+ *    Formula: voltage = 0.35 + (amplitude - 80) * 0.95 / 170
+ *
+ *  MP-Driver type differences (selectable via Kconfig):
+ *    Standard mp-Driver: CLK = output frequency 1:1,  85-250 Vpp, 25-226 Hz
+ *    High mp-Driver:     CLK = 4x target frequency,   10-250 Vpp, 50-800 Hz
+ *    Low mp-Driver:      CLK = output frequency,       0-150 Vpp,  8-2000 Hz
  *
  * SPDX-License-Identifier: MIT
  ********************************************************/
@@ -50,7 +56,7 @@ extern "C" {
 
 typedef struct {
     uint16_t amplitude;         /*!< Current amplitude setting (80-250) */
-    uint16_t freq_hz;           /*!< Current driver frequency (25-226 Hz) */
+    uint16_t freq_hz;           /*!< Current driver frequency (25-300 Hz) */
     bool is_running;            /*!< Pump running state */
     bool is_initialized;        /*!< Driver initialized state */
 } mp6_handle_t;
@@ -98,7 +104,7 @@ esp_err_t mp6_set_amplitude(mp6_handle_t *handle, uint16_t amplitude);
  * @brief Set driver clock frequency
  *
  * @param handle Pointer to MP6 driver handle
- * @param freq_hz Driver frequency in Hz (25-226)
+ * @param freq_hz Driver frequency in Hz (25-300)
  * @return esp_err_t ESP_OK on success
  */
 esp_err_t mp6_set_frequency(mp6_handle_t *handle, uint16_t freq_hz);

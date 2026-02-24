@@ -69,7 +69,7 @@ class MicrofluidicController:
     Commands (PC -> ESP32):
         PUMP ON / PUMP OFF
         AMP <80-250>
-        FREQ <25-226>
+        FREQ <25-300>
         PID START <target> <duration>
         PID STOP
         PID TARGET <value>
@@ -305,7 +305,15 @@ class MicrofluidicController:
                 break
 
     def _dispatch(self, line: str):
-        """Route incoming line to callback or response slot."""
+        """Route incoming line to callback or response slot.
+
+        Classification order:
+          1. ESP-IDF log lines ([EWIDV] (nnn) TAG: ...) -> discard
+          2. "D " prefix   -> on_data(flow, temperature) callback
+          3. "EVENT ..."   -> on_pid_done / on_air_in_line / on_high_flow / on_flow_err
+          4. OK/ERR/S/SCAN -> command response (wakes waiting _send_cmd_raw thread)
+          5. Anything else -> discard (boot garbage, partial lines)
+        """
         # Filter ESP-IDF log output that shares UART0 with our protocol.
         # Format: "I (40478) MAIN: Pump ON", "W (40478) SERIAL: ..."
         if _ESP_LOG_RE.match(line):

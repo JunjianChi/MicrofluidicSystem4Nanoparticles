@@ -32,7 +32,12 @@ extern "C" {
 #define PID_OUTPUT_MAX          250.0f  /* Maps to MP6_AMPLITUDE_MAX */
 #define PID_INTEGRAL_LIMIT      500.0f  /* Anti-windup integral clamp */
 
-/* Flow deviation alert thresholds */
+/*
+ * Flow deviation alert thresholds.
+ * If measured flow deviates more than PID_FLOW_ERR_PERCENT from the target
+ * for a continuous period of PID_FLOW_ERR_TIME_S seconds, an EVENT FLOW_ERR
+ * is sent to the host.  The accumulator resets when flow returns within range.
+ */
 #define PID_FLOW_ERR_PERCENT    20.0f   /* Deviation threshold (%) */
 #define PID_FLOW_ERR_TIME_S     10      /* Sustained deviation time (s) */
 

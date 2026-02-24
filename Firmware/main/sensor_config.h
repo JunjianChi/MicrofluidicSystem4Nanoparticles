@@ -48,7 +48,14 @@ extern "C" {
     #define FLOW_SENSOR_ENABLED         0
 #endif
 
-/* Flow sensor product model selection */
+/*
+ * Flow sensor product model selection.
+ * Scale factor converts raw I2C 16-bit signed value to ul/min:
+ *   flow_ul_min = raw_value / SCALE_FACTOR
+ *
+ *   SLF3S-0600F: scale=10.0  -> range +/-3250 ul/min (low-flow microfluidic)
+ *   SLF3S-1300F: scale=500.0 -> range 0-40 ml/min    (higher-flow applications)
+ */
 #if defined(CONFIG_FLOW_SENSOR_0600F)
     #define FLOW_SENSOR_PRODUCT_NUMBER  0x07030300
     #define FLOW_SENSOR_SCALE_FACTOR    10.0f
@@ -104,6 +111,12 @@ typedef enum {
 
 /********************************************************
  * PIN CONFIGURATION
+ *
+ * Kconfig -> compile macro mapping:
+ *   CONFIG_I2C_SDA_PIN (default 21)         -> I2C_MASTER_SDA_IO    (used by i2c_interface.c)
+ *   CONFIG_I2C_SCL_PIN (default 22)         -> I2C_MASTER_SCL_IO    (used by i2c_interface.c)
+ *   CONFIG_MP_DRIVER_ENABLE_PIN (default 14) -> MP_DRIVER_ENABLE_IO  (used by mp6_driver.c)
+ *   CONFIG_MP_DRIVER_CLOCK_PIN (default 27)  -> MP_DRIVER_CLOCK_IO   (used by mp6_driver.c)
  ********************************************************/
 
 /* I2C Pin Configuration */
@@ -121,19 +134,25 @@ typedef enum {
 
 /********************************************************
  * SENSOR I2C ADDRESSES
+ *
+ * I2C bus device map (all on I2C_NUM_0 at 100 kHz):
+ *   0x08  SLF3S flow sensor     (flow, temperature, signaling flags)
+ *   0x48  Temperature sensor    (TMP117 or similar, reserved)
+ *   0x61  MCP4726 DAC           (amplitude output for MP-Driver)
+ *   0x76  Pressure sensor       (MS5837 or similar, reserved)
  ********************************************************/
 
 /* Pressure Sensor (example: MS5837 or similar) */
-#define PRESSURE_SENSOR_I2C_ADDR    0x76    // Update with your actual pressure sensor address
+#define PRESSURE_SENSOR_I2C_ADDR    0x76
 
 /* Temperature Sensor (example: TMP117 or similar) */
-#define TEMPERATURE_SENSOR_I2C_ADDR 0x48    // Update with your actual temperature sensor address
+#define TEMPERATURE_SENSOR_I2C_ADDR 0x48
 
 /* Flow Sensor (SLF3S) */
-#define FLOW_SENSOR_I2C_ADDR        0x08    // SLF3S flow sensor address
+#define FLOW_SENSOR_I2C_ADDR        0x08
 
 /* DAC for MP-Driver (MCP4726) */
-#define MP_DRIVER_DAC_I2C_ADDR      0x61    // MCP4726 DAC address
+#define MP_DRIVER_DAC_I2C_ADDR      0x61
 
 /********************************************************
  * SENSOR SAMPLING CONFIGURATION

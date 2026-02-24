@@ -31,37 +31,35 @@ extern "C" {
  ********************************************************/
 
 struct system_state {
-    /* Operating mode */
+    /* Operating mode: MODE_MANUAL (open-loop) or MODE_PID (closed-loop) */
     system_mode_t mode;
 
     /* Pump state */
-    bool pump_on;
-    uint16_t amplitude;
-    uint16_t frequency;
+    bool pump_on;                   /*!< true when pump is actively running */
+    uint16_t amplitude;             /*!< Current amplitude setting (80-250, 0 when off) */
+    uint16_t frequency;             /*!< Current frequency in Hz (25-300, default 100) */
 
-    /* Sensor data */
-    float current_flow;
-    float current_temperature;  /*!< Flow sensor temperature (°C) */
-    uint16_t sensor_flags;      /*!< Flow sensor signaling flags */
+    /* Sensor data (updated every 100ms by sensor_read_task) */
+    float current_flow;             /*!< Latest flow reading (ul/min) */
+    float current_temperature;      /*!< Flow sensor temperature (°C) */
+    uint16_t sensor_flags;          /*!< SLF3S signaling flags (air-in-line, high flow) */
 
-    /* PID state */
-    float pid_target;
-    uint32_t pid_elapsed_s;
-    uint32_t pid_duration_s;
+    /* PID state (valid only when mode == MODE_PID) */
+    float pid_target;               /*!< Target flow rate (ul/min) */
+    uint32_t pid_elapsed_s;         /*!< Seconds since PID started */
+    uint32_t pid_duration_s;        /*!< Total PID duration (0 = infinite) */
 
-    /* Data stream */
+    /* Data stream: when true, sensor_read_task sends "D <flow> <temp>" at 10Hz */
     bool stream_enabled;
 
-    /* Air-in-line detection (edge-triggered) */
-    bool air_in_line;
+    /* Edge-triggered flags: EVENT sent only on 0->1 transition */
+    bool air_in_line;               /*!< Air bubble detected in flow path */
+    bool high_flow;                 /*!< Flow rate exceeds sensor range */
 
-    /* High-flow detection (edge-triggered) */
-    bool high_flow;
-
-    /* Hardware availability (updated by hot-plug detection) */
-    bool pump_available;
-    bool sensor_available;
-    bool pressure_available;
+    /* Hardware availability (set at boot, updated by 5s hot-plug re-probe) */
+    bool pump_available;            /*!< MCP4726 DAC at 0x61 detected */
+    bool sensor_available;          /*!< SLF3S flow sensor at 0x08 detected */
+    bool pressure_available;        /*!< Pressure sensor at 0x76 detected */
 
     /* Hardware handles */
     mp6_handle_t pump;

@@ -11,6 +11,14 @@
  *  - Helper functions for sensor drivers
  *  - Easy to modify for different boards
  *
+ *  Design: Two API styles are provided:
+ *    - write()/read():          Raw byte I/O without register addressing.
+ *                               Used by SLF3S which uses command mode (send command
+ *                               bytes, then read result bytes, no register concept).
+ *    - write_reg()/read_reg():  Register-addressed I/O (write reg addr, then data).
+ *                               Reserved for future sensors (pressure, temperature)
+ *                               that follow the standard register-based I2C model.
+ *
  * SPDX-License-Identifier: MIT
  ********************************************************/
 
