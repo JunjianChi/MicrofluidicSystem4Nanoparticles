@@ -54,11 +54,14 @@ class SignalBridge(QObject):
     pid_done = pyqtSignal()
     flow_err = pyqtSignal(float, float)        # target, actual
     air_in_line = pyqtSignal()                 # air bubble detected
+    air_clear = pyqtSignal()                   # air-in-line condition resolved
     high_flow = pyqtSignal()                   # flow exceeds sensor range
+    high_flow_clear = pyqtSignal()             # high-flow condition resolved
     log_message = pyqtSignal(str)              # raw log line
     connection_lost = pyqtSignal()             # serial port disconnected
     status_received = pyqtSignal(object)       # SystemStatus from background poll
     hw_scan_result = pyqtSignal(object)        # list of I2C addresses from background scan
+    cmd_result = pyqtSignal(str, bool, str)    # (cmd_id, success, error_msg)
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +98,7 @@ class MainWindow(QMainWindow):
         # PID target for chart overlay
         self._pid_target: Optional[float] = None
         self._pid_running = False
+        self._pending_pid_target: float = 0.0
 
         # Plot pause state
         self._plot_paused = False
@@ -499,10 +503,14 @@ class MainWindow(QMainWindow):
     # --- Alerts Group ---
     def _build_alerts_group(self) -> QGroupBox:
         grp = QGroupBox("Alerts")
-        layout = QVBoxLayout(grp)
+        layout = QHBoxLayout(grp)
         self.lbl_alert = QLabel("No alerts")
         self.lbl_alert.setWordWrap(True)
-        layout.addWidget(self.lbl_alert)
+        layout.addWidget(self.lbl_alert, stretch=1)
+        self.btn_dismiss_alert = QPushButton("Dismiss")
+        self.btn_dismiss_alert.setFixedWidth(70)
+        self.btn_dismiss_alert.setVisible(False)
+        layout.addWidget(self.btn_dismiss_alert)
         return grp
 
     # --- Log Group ---
@@ -552,6 +560,9 @@ class MainWindow(QMainWindow):
         # Plot pause/resume
         self.btn_plot_pause.toggled.connect(self._on_plot_pause_toggled)
 
+        # Alerts
+        self.btn_dismiss_alert.clicked.connect(self._dismiss_alert)
+
         # Recording
         self.btn_record.clicked.connect(self._start_recording)
         self.btn_record_stop.clicked.connect(self._stop_recording)
@@ -562,11 +573,14 @@ class MainWindow(QMainWindow):
         self._bridge.pid_done.connect(self._on_pid_done)
         self._bridge.flow_err.connect(self._on_flow_err)
         self._bridge.air_in_line.connect(self._on_air_in_line)
+        self._bridge.air_clear.connect(self._on_air_clear)
         self._bridge.high_flow.connect(self._on_high_flow)
+        self._bridge.high_flow_clear.connect(self._on_high_flow_clear)
         self._bridge.log_message.connect(self._append_log)
         self._bridge.connection_lost.connect(self._on_connection_lost)
         self._bridge.status_received.connect(self._update_status_display)
         self._bridge.hw_scan_result.connect(self._on_hw_scan_result)
+        self._bridge.cmd_result.connect(self._on_cmd_result)
 
     # ==================================================================
     # Mode switching
@@ -619,7 +633,9 @@ class MainWindow(QMainWindow):
         self._ctrl.on_pid_done = lambda: self._bridge.pid_done.emit()
         self._ctrl.on_flow_err = lambda t, a: self._bridge.flow_err.emit(t, a)
         self._ctrl.on_air_in_line = lambda: self._bridge.air_in_line.emit()
+        self._ctrl.on_air_clear = lambda: self._bridge.air_clear.emit()
         self._ctrl.on_high_flow = lambda: self._bridge.high_flow.emit()
+        self._ctrl.on_high_flow_clear = lambda: self._bridge.high_flow_clear.emit()
 
         # Wrap _send_cmd_raw to log TX/RX traffic
         original_send = self._ctrl._send_cmd_raw
@@ -927,33 +943,26 @@ class MainWindow(QMainWindow):
             return False, err_str
 
     def _cmd_pump_on(self):
-        # Send current slider values before starting pump
-        ok, err = self._run_cmd(self._ctrl.set_amplitude, self.spin_amp.value())
-        if not ok:
-            self.lbl_pump_feedback.setText(f"Set amplitude failed: {err}")
-            self.lbl_pump_feedback.setStyleSheet("color: red; font-weight: bold;")
+        if not self._ctrl or not self._ctrl.is_connected:
             return
-        ok, err = self._run_cmd(self._ctrl.set_frequency, self.spin_freq.value())
-        if not ok:
-            self.lbl_pump_feedback.setText(f"Set frequency failed: {err}")
-            self.lbl_pump_feedback.setStyleSheet("color: red; font-weight: bold;")
-            return
-        ok, err = self._run_cmd(self._ctrl.pump_on)
-        if ok:
-            self.lbl_pump_feedback.setText("Pump: ON")
-            self.lbl_pump_feedback.setStyleSheet("color: green; font-weight: bold;")
-        else:
-            self.lbl_pump_feedback.setText(f"Pump start failed: {err}")
-            self.lbl_pump_feedback.setStyleSheet("color: red; font-weight: bold;")
+        self.btn_pump_on.setEnabled(False)
+        self.lbl_pump_feedback.setText("Pump: starting...")
+        self.lbl_pump_feedback.setStyleSheet("color: orange; font-weight: bold;")
+        amp = self.spin_amp.value()
+        freq = self.spin_freq.value()
+        self._bg_cmd_seq("pump_on", [
+            (self._ctrl.set_amplitude, amp),
+            (self._ctrl.set_frequency, freq),
+            (self._ctrl.pump_on,),
+        ])
 
     def _cmd_pump_off(self):
-        ok, err = self._run_cmd(self._ctrl.pump_off)
-        if ok:
-            self.lbl_pump_feedback.setText("Pump: OFF")
-            self.lbl_pump_feedback.setStyleSheet("color: gray; font-weight: bold;")
-        else:
-            self.lbl_pump_feedback.setText(f"Pump stop failed: {err}")
-            self.lbl_pump_feedback.setStyleSheet("color: red; font-weight: bold;")
+        if not self._ctrl or not self._ctrl.is_connected:
+            return
+        self.btn_pump_off.setEnabled(False)
+        self.lbl_pump_feedback.setText("Pump: stopping...")
+        self.lbl_pump_feedback.setStyleSheet("color: orange; font-weight: bold;")
+        self._bg_cmd_seq("pump_off", [(self._ctrl.pump_off,)])
 
     def _on_amp_changed(self, _value):
         """Slider/spinbox amplitude changed — debounce then send if pump is on."""
@@ -1020,6 +1029,106 @@ class MainWindow(QMainWindow):
         except (CommError, TimeoutError, ConnectionError, ValueError) as e:
             self._bridge.log_message.emit(f"[ERROR] {e}")
 
+    def _bg_cmd_seq(self, cmd_id: str, steps):
+        """Run a sequence of API calls in a background thread.
+
+        *steps* is a list of (callable, args...) tuples executed in order.
+        On first failure the sequence stops.  Result is delivered via
+        cmd_result signal so the GUI thread can update widgets safely.
+        """
+        def _worker():
+            for step in steps:
+                func, *args = step
+                try:
+                    func(*args)
+                except (CommError, TimeoutError, ConnectionError, ValueError) as e:
+                    self._bridge.cmd_result.emit(cmd_id, False, str(e))
+                    return
+            self._bridge.cmd_result.emit(cmd_id, True, "")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_cmd_result(self, cmd_id: str, ok: bool, err: str):
+        """Handle background command completion on GUI thread."""
+        if not ok:
+            self._append_log(f"[ERROR] {cmd_id}: {err}")
+            if "PUMP_UNAVAIL" in err:
+                self._pump_available = False
+                self._update_hw_labels()
+                self._apply_hw_availability()
+            if "SENSOR_UNAVAIL" in err:
+                self._sensor_available = False
+                self._update_hw_labels()
+                self._apply_hw_availability()
+
+        if cmd_id == "pump_on":
+            self.btn_pump_on.setEnabled(True)
+            if ok:
+                self.lbl_pump_feedback.setText("Pump: ON")
+                self.lbl_pump_feedback.setStyleSheet("color: green; font-weight: bold;")
+            else:
+                self.lbl_pump_feedback.setText(f"Pump start failed: {err}")
+                self.lbl_pump_feedback.setStyleSheet("color: red; font-weight: bold;")
+
+        elif cmd_id == "pump_off":
+            self.btn_pump_off.setEnabled(True)
+            if ok:
+                self.lbl_pump_feedback.setText("Pump: OFF")
+                self.lbl_pump_feedback.setStyleSheet("color: gray; font-weight: bold;")
+            else:
+                self.lbl_pump_feedback.setText(f"Pump stop failed: {err}")
+                self.lbl_pump_feedback.setStyleSheet("color: red; font-weight: bold;")
+
+        elif cmd_id == "pid_start":
+            if ok:
+                self._pid_running = True
+                self._pid_target = self._pending_pid_target
+                self.target_line.setValue(self._pid_target)
+                self.target_line.setVisible(True)
+                self.btn_pid_start.setEnabled(False)
+                self.btn_pid_stop.setEnabled(True)
+                self.spin_pid_duration.setEnabled(False)
+                self.combo_mode.setEnabled(False)
+                self.lbl_pid_feedback.setText(
+                    f"PID: running (target={self._pid_target:.2f} ul/min)")
+                self.lbl_pid_feedback.setStyleSheet("color: #2196F3; font-weight: bold;")
+            else:
+                self.btn_pid_start.setEnabled(True)
+                self.lbl_pid_feedback.setText(f"PID start failed: {err}")
+                self.lbl_pid_feedback.setStyleSheet("color: red; font-weight: bold;")
+
+        elif cmd_id == "pid_stop":
+            if ok:
+                self._pid_stopped_cleanup()
+                self.lbl_pid_feedback.setText("PID: stopped by user")
+                self.lbl_pid_feedback.setStyleSheet("color: gray; font-weight: bold;")
+            else:
+                self.btn_pid_stop.setEnabled(True)
+                self.lbl_pid_feedback.setText(f"PID stop failed: {err}")
+                self.lbl_pid_feedback.setStyleSheet("color: red; font-weight: bold;")
+
+        elif cmd_id == "calibration":
+            self.combo_calibration.setEnabled(True)
+            if ok:
+                liquid = self.combo_calibration.currentData()
+                self.lbl_alert.setText(f"Calibration set to {liquid}")
+                self.lbl_alert.setStyleSheet("color: #2196F3; font-weight: bold;")
+                self._append_log(f"Calibration changed to {liquid}")
+            else:
+                self._append_log(f"Calibration change failed: {err}")
+
+        elif cmd_id == "i2c_scan":
+            self.btn_i2c_scan.setEnabled(True)
+            self.btn_i2c_scan.setText("I2C Scan")
+            if ok:
+                if err:  # reused err field to carry address list
+                    self._append_log(f"I2C devices found: {err}")
+                    QMessageBox.information(self, "I2C Scan", f"Devices found:\n{err}")
+                else:
+                    self._append_log("I2C scan: no devices found")
+                    QMessageBox.information(self, "I2C Scan", "No devices found.")
+            else:
+                self._append_log(f"I2C scan failed: {err}")
+
     def _cmd_pid_start(self):
         target = self.spin_pid_target.value()
         duration = self.spin_pid_duration.value()
@@ -1041,39 +1150,18 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
 
-        # Send PID TUNE first (set gains before starting)
-        ok, err = self._run_cmd(
-            self._ctrl.pid_tune,
-            self.spin_kp.value(),
-            self.spin_ki.value(),
-            self.spin_kd.value(),
-        )
-        if not ok:
-            self.lbl_pid_feedback.setText(f"PID tune failed: {err}")
-            self.lbl_pid_feedback.setStyleSheet("color: red; font-weight: bold;")
-            return
-
-        # Send PID START
-        ok, err = self._run_cmd(self._ctrl.pid_start, target, duration)
-        if ok:
-            self._pid_running = True
-            self._pid_target = target
-            self.target_line.setValue(target)
-            self.target_line.setVisible(True)
-
-            self.btn_pid_start.setEnabled(False)
-            self.btn_pid_stop.setEnabled(True)
-            # Duration cannot change while running; target and gains can be live-tuned
-            self.spin_pid_duration.setEnabled(False)
-
-            # Prevent switching to manual during PID
-            self.combo_mode.setEnabled(False)
-
-            self.lbl_pid_feedback.setText(f"PID: running (target={target:.2f} ul/min)")
-            self.lbl_pid_feedback.setStyleSheet("color: #2196F3; font-weight: bold;")
-        else:
-            self.lbl_pid_feedback.setText(f"PID start failed: {err}")
-            self.lbl_pid_feedback.setStyleSheet("color: red; font-weight: bold;")
+        # Disable button and run tune+start in background
+        self.btn_pid_start.setEnabled(False)
+        self.lbl_pid_feedback.setText("PID: starting...")
+        self.lbl_pid_feedback.setStyleSheet("color: orange; font-weight: bold;")
+        self._pending_pid_target = target
+        kp = self.spin_kp.value()
+        ki = self.spin_ki.value()
+        kd = self.spin_kd.value()
+        self._bg_cmd_seq("pid_start", [
+            (self._ctrl.pid_tune, kp, ki, kd),
+            (self._ctrl.pid_start, target, duration),
+        ])
 
     def _cmd_pid_stop(self):
         # Confirmation dialog
@@ -1085,14 +1173,10 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
 
-        ok, err = self._run_cmd(self._ctrl.pid_stop)
-        if ok:
-            self._pid_stopped_cleanup()
-            self.lbl_pid_feedback.setText("PID: stopped by user")
-            self.lbl_pid_feedback.setStyleSheet("color: gray; font-weight: bold;")
-        else:
-            self.lbl_pid_feedback.setText(f"PID stop failed: {err}")
-            self.lbl_pid_feedback.setStyleSheet("color: red; font-weight: bold;")
+        self.btn_pid_stop.setEnabled(False)
+        self.lbl_pid_feedback.setText("PID: stopping...")
+        self.lbl_pid_feedback.setStyleSheet("color: orange; font-weight: bold;")
+        self._bg_cmd_seq("pid_stop", [(self._ctrl.pid_stop,)])
 
     def _pid_stopped_cleanup(self):
         """Reset PID-related UI state after PID stops (by user or auto-done)."""
@@ -1116,24 +1200,24 @@ class MainWindow(QMainWindow):
         if not self._ctrl or not self._ctrl.is_connected:
             return
         liquid = self.combo_calibration.currentData()
-        ok, err = self._run_cmd(self._ctrl.set_calibration, liquid)
-        if ok:
-            self.lbl_alert.setText(f"Calibration set to {liquid}")
-            self.lbl_alert.setStyleSheet("color: #2196F3; font-weight: bold;")
-            self._append_log(f"Calibration changed to {liquid}")
-        else:
-            self._append_log(f"Calibration change failed: {err}")
+        self.combo_calibration.setEnabled(False)
+        self._bg_cmd_seq("calibration", [(self._ctrl.set_calibration, liquid)])
 
     def _cmd_i2c_scan(self):
-        ok, devices = self._run_cmd(self._ctrl.scan_i2c)
-        if ok and devices is not None:
-            if devices:
-                addr_str = ", ".join(f"0x{d:02X}" for d in devices)
-                self._append_log(f"I2C devices found: {addr_str}")
-                QMessageBox.information(self, "I2C Scan", f"Devices found:\n{addr_str}")
-            else:
-                self._append_log("I2C scan: no devices found")
-                QMessageBox.information(self, "I2C Scan", "No devices found.")
+        if not self._ctrl or not self._ctrl.is_connected:
+            return
+        self.btn_i2c_scan.setEnabled(False)
+        self.btn_i2c_scan.setText("Scanning...")
+
+        def _worker():
+            try:
+                devices = self._ctrl.scan_i2c()
+                self._bridge.cmd_result.emit(
+                    "i2c_scan", True,
+                    " ".join(f"0x{d:02X}" for d in devices) if devices else "")
+            except (CommError, TimeoutError, ConnectionError, ValueError) as e:
+                self._bridge.cmd_result.emit("i2c_scan", False, str(e))
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _cmd_status(self):
         ok, status = self._run_cmd(self._ctrl.get_status)
@@ -1187,17 +1271,39 @@ class MainWindow(QMainWindow):
         msg = f"FLOW_ERR: target={target:.2f}, actual={actual:.2f} ul/min"
         self.lbl_alert.setText(msg)
         self.lbl_alert.setStyleSheet("color: red; font-weight: bold;")
+        self.btn_dismiss_alert.setVisible(True)
         self._append_log(f"[EVENT] {msg}")
 
     def _on_air_in_line(self):
         self.lbl_alert.setText("AIR_IN_LINE: Air bubble detected in flow path!")
         self.lbl_alert.setStyleSheet("color: #FF9800; font-weight: bold;")
+        self.btn_dismiss_alert.setVisible(False)
         self._append_log("[EVENT] AIR_IN_LINE: Air bubble detected")
+
+    def _on_air_clear(self):
+        if self.lbl_alert.text().startswith("AIR_IN_LINE:"):
+            self.lbl_alert.setText("No alerts")
+            self.lbl_alert.setStyleSheet("")
+            self.btn_dismiss_alert.setVisible(False)
+        self._append_log("[EVENT] AIR_CLEAR: Air-in-line condition resolved")
 
     def _on_high_flow(self):
         self.lbl_alert.setText("HIGH_FLOW: Flow rate exceeds sensor range!")
         self.lbl_alert.setStyleSheet("color: red; font-weight: bold;")
+        self.btn_dismiss_alert.setVisible(False)
         self._append_log("[EVENT] HIGH_FLOW: Flow rate exceeds sensor range")
+
+    def _on_high_flow_clear(self):
+        if self.lbl_alert.text().startswith("HIGH_FLOW:"):
+            self.lbl_alert.setText("No alerts")
+            self.lbl_alert.setStyleSheet("")
+            self.btn_dismiss_alert.setVisible(False)
+        self._append_log("[EVENT] HIGH_FLOW_CLEAR: High-flow condition resolved")
+
+    def _dismiss_alert(self):
+        self.lbl_alert.setText("No alerts")
+        self.lbl_alert.setStyleSheet("")
+        self.btn_dismiss_alert.setVisible(False)
 
     # ==================================================================
     # Chart refresh & plot pause
@@ -1272,6 +1378,17 @@ class MainWindow(QMainWindow):
         else:
             if self._pid_running:
                 self._pid_stopped_cleanup()
+
+        # Safety-net: clear stale alerts based on STATUS flags
+        alert_text = self.lbl_alert.text()
+        if alert_text.startswith("AIR_IN_LINE:") and not status.air_in_line:
+            self.lbl_alert.setText("No alerts")
+            self.lbl_alert.setStyleSheet("")
+            self.btn_dismiss_alert.setVisible(False)
+        if alert_text.startswith("HIGH_FLOW:") and not status.high_flow:
+            self.lbl_alert.setText("No alerts")
+            self.lbl_alert.setStyleSheet("")
+            self.btn_dismiss_alert.setVisible(False)
 
     # ==================================================================
     # Data recording & CSV export

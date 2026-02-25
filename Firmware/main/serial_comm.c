@@ -120,7 +120,7 @@ void serial_comm_send_data(float flow, float temperature)
 
 void serial_comm_send_status(const system_state_t *state)
 {
-    serial_comm_send("S %s %d %d %d %.2f %.2f %d %d %d %d %d %.2f\n",
+    serial_comm_send("S %s %d %d %d %.2f %.2f %d %d %d %d %d %.2f %d %d\n",
                      (state->mode == MODE_PID) ? "PID" : "MANUAL",
                      state->pump_on ? 1 : 0,
                      (int)state->amplitude,
@@ -132,7 +132,9 @@ void serial_comm_send_status(const system_state_t *state)
                      state->pump_available ? 1 : 0,
                      state->sensor_available ? 1 : 0,
                      state->pressure_available ? 1 : 0,
-                     state->current_temperature);
+                     state->current_temperature,
+                     state->air_in_line ? 1 : 0,
+                     state->high_flow ? 1 : 0);
 }
 
 void serial_comm_send_scan(const uint8_t *devices, uint8_t count)
@@ -164,6 +166,16 @@ void serial_comm_send_event_air_in_line(void)
 void serial_comm_send_event_high_flow(void)
 {
     serial_comm_send("EVENT HIGH_FLOW\n");
+}
+
+void serial_comm_send_event_air_clear(void)
+{
+    serial_comm_send("EVENT AIR_CLEAR\n");
+}
+
+void serial_comm_send_event_high_flow_clear(void)
+{
+    serial_comm_send("EVENT HIGH_FLOW_CLEAR\n");
 }
 
 /********************************************************

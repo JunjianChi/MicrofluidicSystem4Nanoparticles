@@ -41,13 +41,8 @@ extern "C" {
 /* I2C Port Configuration */
 #define I2C_MASTER_PORT         I2C_NUM_0
 
-/* I2C Parameters (can be modified for different boards) */
-#define I2C_MASTER_FREQ_HZ      100000      /*!< I2C master clock frequency (100kHz) */
+/* I2C Parameters - frequency and buffer config defined in sensor_config.h */
 #define I2C_TIMEOUT_MS          1000        /*!< I2C timeout in milliseconds */
-
-/* I2C Buffer Configuration */
-#define I2C_MASTER_TX_BUF_DISABLE   0       /*!< I2C master doesn't need TX buffer */
-#define I2C_MASTER_RX_BUF_DISABLE   0       /*!< I2C master doesn't need RX buffer */
 
 /********************************************************
  * FUNCTION DECLARATIONS

@@ -129,6 +129,16 @@ void serial_comm_send_event_air_in_line(void);
 void serial_comm_send_event_high_flow(void);
 
 /**
+ * @brief Send EVENT AIR_CLEAR notification (air-in-line condition resolved)
+ */
+void serial_comm_send_event_air_clear(void);
+
+/**
+ * @brief Send EVENT HIGH_FLOW_CLEAR notification (high-flow condition resolved)
+ */
+void serial_comm_send_event_high_flow_clear(void);
+
+/**
  * @brief Parse and execute a command line
  *
  * @param state     Pointer to system state

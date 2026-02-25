@@ -16,10 +16,10 @@
  *      - Lower priority so it yields to sensor sampling
  *
  *    sensor_read_task (priority 6, stack 4096)
- *      - Runs every 100ms (vTaskDelayUntil) for consistent 10Hz sampling
+ *      - Runs every 20ms (vTaskDelayUntil) for consistent 50Hz sampling
  *      - Reads SLF3S flow + temperature + flags
  *      - Edge-detects AIR_IN_LINE and HIGH_FLOW (events on 0->1 transition)
- *      - In PID mode: pid_compute() -> mp6_set_amplitude() every 100ms
+ *      - In PID mode: pid_compute() -> mp6_set_amplitude() every 20ms
  *      - Checks PID flow deviation (>20% for >10s -> FLOW_ERR event)
  *      - Checks PID duration expiry (auto-stop -> PID_DONE event)
  *      - Sends data stream "D <flow> <temp>" when stream_enabled is true
@@ -90,7 +90,7 @@ static SemaphoreHandle_t g_state_mutex;
 #define PID_TICK_TASK_STACK     2048
 #define PID_TICK_TASK_PRIO      4
 
-/* Sensor read interval = FLOW_SAMPLE_PERIOD_MS (100ms → 10Hz) */
+/* Sensor read interval = FLOW_SAMPLE_PERIOD_MS (20ms → 50Hz) */
 #define SENSOR_INTERVAL_MS      FLOW_SAMPLE_PERIOD_MS
 
 /********************************************************
@@ -122,6 +122,7 @@ void app_cmd_pump_on(system_state_t *state)
     STATE_UNLOCK();
     // ESP_LOGI(TAG, "Pump ON");
 }
+
 
 void app_cmd_pump_off(system_state_t *state)
 {
@@ -357,24 +358,28 @@ static void sensor_read_task(void *param)
             esp_err_t ret = slf3s_read_measurement(&g_state.flow_sensor, &meas);
             if (ret == ESP_OK) {
                 flow = meas.flow;
+
+                /* Compute edge flags under lock, send events outside */
                 STATE_LOCK();
                 g_state.current_temperature = meas.temperature;
                 g_state.sensor_flags = meas.flags;
 
-                /* Air-in-line detection (edge-triggered: notify once on rising edge) */
                 bool air_now = (meas.flags & SLF3S_FLAG_AIR_IN_LINE) != 0;
-                if (air_now && !g_state.air_in_line) {
-                    serial_comm_send_event_air_in_line();
-                }
+                bool emit_air_set   = air_now  && !g_state.air_in_line;
+                bool emit_air_clear = !air_now &&  g_state.air_in_line;
                 g_state.air_in_line = air_now;
 
-                /* High-flow detection (edge-triggered: notify once on rising edge) */
                 bool high_now = (meas.flags & SLF3S_FLAG_HIGH_FLOW) != 0;
-                if (high_now && !g_state.high_flow) {
-                    serial_comm_send_event_high_flow();
-                }
+                bool emit_high_set   = high_now  && !g_state.high_flow;
+                bool emit_high_clear = !high_now &&  g_state.high_flow;
                 g_state.high_flow = high_now;
                 STATE_UNLOCK();
+
+                /* UART sends outside mutex to avoid blocking serial_cmd_task */
+                if (emit_air_set)    serial_comm_send_event_air_in_line();
+                if (emit_air_clear)  serial_comm_send_event_air_clear();
+                if (emit_high_set)   serial_comm_send_event_high_flow();
+                if (emit_high_clear) serial_comm_send_event_high_flow_clear();
             }
         }
 

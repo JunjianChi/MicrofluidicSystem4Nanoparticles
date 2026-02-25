@@ -46,6 +46,8 @@ class SystemStatus:
     sensor_available: bool
     pressure_available: bool
     current_temperature: float
+    air_in_line: bool = False
+    high_flow: bool = False
 
 
 class CommError(Exception):
@@ -84,7 +86,9 @@ class MicrofluidicController:
         EVENT PID_DONE              - PID duration expired
         EVENT FLOW_ERR <tgt> <act>  - Sustained flow deviation
         EVENT AIR_IN_LINE           - Air bubble detected in flow path
+        EVENT AIR_CLEAR             - Air-in-line condition resolved
         EVENT HIGH_FLOW             - Flow rate exceeds sensor range
+        EVENT HIGH_FLOW_CLEAR       - High-flow condition resolved
     """
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 2.0):
@@ -105,6 +109,8 @@ class MicrofluidicController:
         self.on_flow_err: Optional[Callable[[float, float], None]] = None
         self.on_air_in_line: Optional[Callable[[], None]] = None
         self.on_high_flow: Optional[Callable[[], None]] = None
+        self.on_air_clear: Optional[Callable[[], None]] = None
+        self.on_high_flow_clear: Optional[Callable[[], None]] = None
 
         # Response queue for synchronous command/response
         self._response_event = threading.Event()
@@ -349,6 +355,18 @@ class MicrofluidicController:
                 self.on_high_flow()
             return
 
+        # Event: AIR_CLEAR (air-in-line condition resolved)
+        if line == "EVENT AIR_CLEAR":
+            if self.on_air_clear:
+                self.on_air_clear()
+            return
+
+        # Event: HIGH_FLOW_CLEAR (high-flow condition resolved)
+        if line == "EVENT HIGH_FLOW_CLEAR":
+            if self.on_high_flow_clear:
+                self.on_high_flow_clear()
+            return
+
         # Event: FLOW_ERR
         if line.startswith("EVENT FLOW_ERR"):
             if self.on_flow_err:
@@ -374,7 +392,7 @@ class MicrofluidicController:
 
     @staticmethod
     def _parse_status(line: str) -> SystemStatus:
-        """Parse: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw> <temp>"""
+        """Parse: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw> <temp> <air> <high>"""
         parts = line.split()
         if len(parts) < 9 or parts[0] != "S":
             raise CommError(f"Invalid STATUS response: {line}")
@@ -391,6 +409,8 @@ class MicrofluidicController:
             sensor_available=(parts[10] == "1") if len(parts) > 10 else True,
             pressure_available=(parts[11] == "1") if len(parts) > 11 else False,
             current_temperature=float(parts[12]) if len(parts) > 12 else 0.0,
+            air_in_line=(parts[13] == "1") if len(parts) > 13 else False,
+            high_flow=(parts[14] == "1") if len(parts) > 14 else False,
         )
 
     # ------------------------------------------------------------------
