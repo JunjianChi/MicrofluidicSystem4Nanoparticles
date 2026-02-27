@@ -10,6 +10,7 @@ Usage:
 """
 from __future__ import annotations
 
+import math
 import sys
 import csv
 import time
@@ -189,6 +190,7 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
 
         left_layout.addWidget(self._build_connection_group())
+        left_layout.addWidget(self._build_tube_params_group())
         left_layout.addWidget(self._build_mode_selector_group())
         left_layout.addWidget(self._build_mode_stack())
         left_layout.addWidget(self._build_tools_group())
@@ -231,6 +233,42 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.lbl_conn_status, 1, 2)
 
         self._refresh_ports()
+        return grp
+
+    # --- Tube Parameters Group ---
+    def _build_tube_params_group(self) -> QGroupBox:
+        grp = QGroupBox("Tube Parameters")
+        form = QFormLayout(grp)
+
+        self.spin_tube_diameter = QDoubleSpinBox()
+        self.spin_tube_diameter.setRange(1, 10000)
+        self.spin_tube_diameter.setDecimals(1)
+        self.spin_tube_diameter.setSuffix(" um")
+        self.spin_tube_diameter.setValue(500.0)
+        form.addRow("Diameter:", self.spin_tube_diameter)
+
+        self.spin_tube_length = QDoubleSpinBox()
+        self.spin_tube_length.setRange(0.1, 1000)
+        self.spin_tube_length.setDecimals(1)
+        self.spin_tube_length.setSuffix(" cm")
+        self.spin_tube_length.setValue(10.0)
+        form.addRow("Length:", self.spin_tube_length)
+
+        self.spin_viscosity = QDoubleSpinBox()
+        self.spin_viscosity.setRange(0.01, 1000)
+        self.spin_viscosity.setDecimals(2)
+        self.spin_viscosity.setSuffix(" mPa.s")
+        self.spin_viscosity.setValue(1.00)  # water at ~20C
+        form.addRow("Viscosity:", self.spin_viscosity)
+
+        # Live computed values (updated on each flow reading)
+        self.lbl_v_avg = QLabel("V_avg: -- mm/s")
+        self.lbl_shear_rate = QLabel("Shear rate: -- 1/s")
+        self.lbl_shear_stress = QLabel("Shear stress: -- mPa")
+        form.addRow(self.lbl_v_avg)
+        form.addRow(self.lbl_shear_rate)
+        form.addRow(self.lbl_shear_stress)
+
         return grp
 
     # --- Mode Selector Group ---
@@ -466,12 +504,15 @@ class MainWindow(QMainWindow):
         grp = QGroupBox("Sensor Data")
         layout = QVBoxLayout(grp)
 
-        # Toolbar with pause/resume
+        # Toolbar with pause/resume and clear
         toolbar = QHBoxLayout()
+        self.btn_plot_clear = QPushButton("Clear")
+        self.btn_plot_clear.setStyleSheet("padding: 4px 12px;")
         self.btn_plot_pause = QPushButton("Pause Plot")
         self.btn_plot_pause.setCheckable(True)
         self.btn_plot_pause.setStyleSheet("padding: 4px 12px;")
         toolbar.addStretch()
+        toolbar.addWidget(self.btn_plot_clear)
         toolbar.addWidget(self.btn_plot_pause)
         layout.addLayout(toolbar)
 
@@ -624,6 +665,7 @@ class MainWindow(QMainWindow):
 
         # Plot pause/resume
         self.btn_plot_pause.toggled.connect(self._on_plot_pause_toggled)
+        self.btn_plot_clear.clicked.connect(self._on_plot_clear)
 
         # Alerts
         self.btn_dismiss_alert.clicked.connect(self._dismiss_alert)
@@ -1518,6 +1560,26 @@ class MainWindow(QMainWindow):
         self.lbl_flow_reading.setText(f"Flow: {flow:.2f} ul/min")
         self.lbl_temp_reading.setText(f"Temp: {temperature:.1f} C")
 
+        # Compute fluid dynamics from tube parameters
+        # Q: ul/min -> m^3/s  (1 ul = 1e-9 m^3, 1 min = 60 s)
+        # r: um -> m  (1 um = 1e-6 m)
+        d_um = self.spin_tube_diameter.value()
+        r_m = (d_um / 2.0) * 1e-6               # radius in metres
+        Q_m3s = flow * 1e-9 / 60.0               # flow in m^3/s
+        mu_Pa_s = self.spin_viscosity.value() * 1e-3  # mPa.s -> Pa.s
+
+        if r_m > 0:
+            area = math.pi * r_m ** 2
+            v_avg = Q_m3s / area                  # m/s
+            v_avg_mm = v_avg * 1000.0             # mm/s
+            shear_rate = 4.0 * Q_m3s / (math.pi * r_m ** 3)  # 1/s
+            shear_stress = mu_Pa_s * shear_rate   # Pa
+            shear_stress_mPa = shear_stress * 1000.0  # mPa
+
+            self.lbl_v_avg.setText(f"V_avg: {v_avg_mm:.2f} mm/s")
+            self.lbl_shear_rate.setText(f"Shear rate: {shear_rate:.1f} 1/s")
+            self.lbl_shear_stress.setText(f"Shear stress: {shear_stress_mPa:.2f} mPa")
+
         # Recording
         if self._recording:
             self._record_buf.append((now - self._record_start, flow, temperature))
@@ -1586,6 +1648,16 @@ class MainWindow(QMainWindow):
     def _on_plot_pause_toggled(self, checked: bool):
         self._plot_paused = checked
         self.btn_plot_pause.setText("Resume Plot" if checked else "Pause Plot")
+
+    def _on_plot_clear(self):
+        """Clear all chart data and reset time reference."""
+        self._time_data.clear()
+        self._flow_data.clear()
+        self._pressure_time_data.clear()
+        self._pressure_data.clear()
+        self._t0 = time.monotonic()
+        self.flow_curve.setData([], [])
+        self.pressure_curve.setData([], [])
 
     def _refresh_chart(self):
         if self._plot_paused:
