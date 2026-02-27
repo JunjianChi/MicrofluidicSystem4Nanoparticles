@@ -16,7 +16,7 @@
  *      - Lower priority so it yields to sensor sampling
  *
  *    sensor_read_task (priority 6, stack 4096)
- *      - Runs every 20ms (vTaskDelayUntil) for consistent 50Hz sampling
+ *      - Runs every 100ms (vTaskDelayUntil) for consistent 10Hz sampling
  *      - Reads SLF3S flow + temperature + flags
  *      - Edge-detects AIR_IN_LINE and HIGH_FLOW (events on 0->1 transition)
  *      - In PID mode: pid_compute() -> mp6_set_amplitude() every 20ms
@@ -90,7 +90,7 @@ static SemaphoreHandle_t g_state_mutex;
 #define PID_TICK_TASK_STACK     2048
 #define PID_TICK_TASK_PRIO      4
 
-/* Sensor read interval = FLOW_SAMPLE_PERIOD_MS (20ms → 50Hz) */
+/* Sensor read interval = FLOW_SAMPLE_PERIOD_MS (100ms → 10Hz) */
 #define SENSOR_INTERVAL_MS      FLOW_SAMPLE_PERIOD_MS
 
 /********************************************************
@@ -489,7 +489,10 @@ static esp_err_t hw_init(void)
         ESP_LOGW(TAG, "MP6 pump not detected (no DAC at 0x%02X)", MCP4726_I2C_ADDR);
     }
 
-    /* Detect flow sensor (SLF3S at 0x08) */
+    /* Detect flow sensor (SLF3S at 0x08)
+     * SLF3S needs ~25ms after power-on before accepting I2C commands.
+     * Add a short delay to avoid init failure on cold boot. */
+    vTaskDelay(pdMS_TO_TICKS(50));
     if (i2c_interface_probe(SLF3S_I2C_ADDR) == ESP_OK) {
         ret = slf3s_init(&g_state.flow_sensor);
         if (ret == ESP_OK) {

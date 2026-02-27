@@ -123,7 +123,7 @@ typedef enum {
 #define I2C_MASTER_SCL_IO       CONFIG_I2C_SCL_PIN      /*!< GPIO number for I2C master clock */
 #define I2C_MASTER_SDA_IO       CONFIG_I2C_SDA_PIN      /*!< GPIO number for I2C master data  */
 #define I2C_MASTER_NUM          I2C_NUM_0               /*!< I2C port number */
-#define I2C_MASTER_FREQ_HZ      400000                  /*!< I2C master clock frequency */
+#define I2C_MASTER_FREQ_HZ      100000                  /*!< I2C master clock frequency */
 #define I2C_MASTER_TX_BUF_DISABLE 0                     /*!< I2C master doesn't need buffer */
 #define I2C_MASTER_RX_BUF_DISABLE 0                     /*!< I2C master doesn't need buffer */
 #define I2C_MASTER_TIMEOUT_MS   1000
@@ -135,7 +135,7 @@ typedef enum {
 /********************************************************
  * SENSOR I2C ADDRESSES
  *
- * I2C bus device map (all on I2C_NUM_0 at 400 kHz):
+ * I2C bus device map (all on I2C_NUM_0 at 100 kHz):
  *   0x08  SLF3S flow sensor     (flow, temperature, signaling flags)
  *   0x48  Temperature sensor    (TMP117 or similar, reserved)
  *   0x61  MCP4726 DAC           (amplitude output for MP-Driver)
