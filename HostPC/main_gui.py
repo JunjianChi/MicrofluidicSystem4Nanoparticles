@@ -27,13 +27,14 @@ from PyQt5.QtWidgets import (
     QGroupBox, QLabel, QPushButton, QComboBox,
     QSlider, QSpinBox, QDoubleSpinBox, QLineEdit,
     QTextEdit, QFileDialog, QMessageBox, QSplitter,
-    QSizePolicy, QStackedWidget, QTabWidget,
+    QSizePolicy, QStackedWidget, QTabWidget, QProgressBar,
 )
 from PyQt5.QtGui import QFont, QColor, QTextCursor
 import pyqtgraph as pg
 import serial.tools.list_ports
 
 from microfluidic_api import MicrofluidicController, CommError, TimeoutError
+from tube_calibration import TubeCalibrationManager, CalibrationResult
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +63,9 @@ class SignalBridge(QObject):
     status_received = pyqtSignal(object)       # SystemStatus from background poll
     hw_scan_result = pyqtSignal(object)        # list of I2C addresses from background scan
     cmd_result = pyqtSignal(str, bool, str)    # (cmd_id, success, error_msg)
+    cal_progress = pyqtSignal(int, str)         # (percent, message)
+    cal_completed = pyqtSignal(object)          # CalibrationResult
+    cal_failed = pyqtSignal(str)                # error message
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +106,12 @@ class MainWindow(QMainWindow):
 
         # Plot pause state
         self._plot_paused = False
+
+        # Tube calibration state
+        self._cal_manager: Optional[TubeCalibrationManager] = None
+        self._calibrating = False
+        self._cal_min_flow: Optional[float] = None
+        self._cal_max_flow: Optional[float] = None
 
         # Guards to prevent overlapping background polls
         self._status_busy = False
@@ -182,6 +192,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._build_mode_selector_group())
         left_layout.addWidget(self._build_mode_stack())
         left_layout.addWidget(self._build_tools_group())
+        left_layout.addWidget(self._build_calibration_group())
         left_layout.addStretch()
 
         # --- Right: Dashboard ---
@@ -307,14 +318,30 @@ class MainWindow(QMainWindow):
         page = QGroupBox("PID Control")
         layout = QVBoxLayout(page)
 
-        form = QFormLayout()
-        self.spin_pid_target = QDoubleSpinBox()
-        self.spin_pid_target.setRange(1, 3250.0)
-        self.spin_pid_target.setDecimals(0)
+        # Target flow rate — slider + spinbox, range set by calibration
+        target_layout = QHBoxLayout()
+        target_layout.addWidget(QLabel("Target:"))
+        self.slider_pid_target = QSlider(Qt.Horizontal)
+        self.slider_pid_target.setRange(0, 0)  # Updated after calibration
+        self.slider_pid_target.setValue(0)
+        self.spin_pid_target = QSpinBox()
+        self.spin_pid_target.setRange(0, 0)
+        self.spin_pid_target.setValue(0)
         self.spin_pid_target.setSuffix(" ul/min")
-        self.spin_pid_target.setValue(10.0)
-        form.addRow("Target:", self.spin_pid_target)
+        target_layout.addWidget(self.slider_pid_target, stretch=1)
+        target_layout.addWidget(self.spin_pid_target)
+        layout.addLayout(target_layout)
 
+        # Sync slider <-> spinbox
+        self.slider_pid_target.valueChanged.connect(self.spin_pid_target.setValue)
+        self.spin_pid_target.valueChanged.connect(self.slider_pid_target.setValue)
+
+        # Calibration hint label (shown when not calibrated)
+        self.lbl_pid_cal_hint = QLabel("Calibrate tube first to enable PID")
+        self.lbl_pid_cal_hint.setStyleSheet("color: #9C27B0; font-style: italic;")
+        layout.addWidget(self.lbl_pid_cal_hint)
+
+        form = QFormLayout()
         self.spin_pid_duration = QSpinBox()
         self.spin_pid_duration.setRange(0, 99999)
         self.spin_pid_duration.setSuffix(" sec")
@@ -394,6 +421,43 @@ class MainWindow(QMainWindow):
         self.combo_calibration.setCurrentIndex(0)
         cal_row.addWidget(self.combo_calibration, stretch=1)
         layout.addLayout(cal_row)
+
+        return grp
+
+    # --- Tube Calibration Group ---
+    def _build_calibration_group(self) -> QGroupBox:
+        grp = QGroupBox("Tube Calibration")
+        layout = QVBoxLayout(grp)
+
+        # Calibrate / Cancel buttons
+        btn_row = QHBoxLayout()
+        self.btn_calibrate = QPushButton("Calibrate Tube")
+        self.btn_calibrate.setStyleSheet(
+            "background-color: #9C27B0; color: white; font-weight: bold; padding: 6px;")
+        self.btn_cal_cancel = QPushButton("Cancel")
+        self.btn_cal_cancel.setEnabled(False)
+        btn_row.addWidget(self.btn_calibrate)
+        btn_row.addWidget(self.btn_cal_cancel)
+        layout.addLayout(btn_row)
+
+        # Progress bar
+        self.cal_progress_bar = QProgressBar()
+        self.cal_progress_bar.setRange(0, 100)
+        self.cal_progress_bar.setValue(0)
+        self.cal_progress_bar.setTextVisible(True)
+        layout.addWidget(self.cal_progress_bar)
+
+        # Status label
+        self.lbl_cal_status = QLabel("Not calibrated")
+        self.lbl_cal_status.setWordWrap(True)
+        self.lbl_cal_status.setStyleSheet("color: gray;")
+        layout.addWidget(self.lbl_cal_status)
+
+        # Range result label
+        self.lbl_cal_range = QLabel("")
+        self.lbl_cal_range.setWordWrap(True)
+        self.lbl_cal_range.setStyleSheet("font-weight: bold;")
+        layout.addWidget(self.lbl_cal_range)
 
         return grp
 
@@ -550,6 +614,7 @@ class MainWindow(QMainWindow):
         self.spin_kp.valueChanged.connect(self._on_pid_gains_changed)
         self.spin_ki.valueChanged.connect(self._on_pid_gains_changed)
         self.spin_kd.valueChanged.connect(self._on_pid_gains_changed)
+        self.slider_pid_target.valueChanged.connect(self._on_pid_target_changed)
         self.spin_pid_target.valueChanged.connect(self._on_pid_target_changed)
 
         # Tools
@@ -568,6 +633,10 @@ class MainWindow(QMainWindow):
         self.btn_record_stop.clicked.connect(self._stop_recording)
         self.btn_export_csv.clicked.connect(self._export_csv)
 
+        # Calibration
+        self.btn_calibrate.clicked.connect(self._cmd_calibrate)
+        self.btn_cal_cancel.clicked.connect(self._cmd_cal_cancel)
+
         # Bridge signals (thread-safe)
         self._bridge.data_received.connect(self._on_data)
         self._bridge.pid_done.connect(self._on_pid_done)
@@ -581,6 +650,9 @@ class MainWindow(QMainWindow):
         self._bridge.status_received.connect(self._update_status_display)
         self._bridge.hw_scan_result.connect(self._on_hw_scan_result)
         self._bridge.cmd_result.connect(self._on_cmd_result)
+        self._bridge.cal_progress.connect(self._on_cal_progress)
+        self._bridge.cal_completed.connect(self._on_cal_completed)
+        self._bridge.cal_failed.connect(self._on_cal_failed)
 
     # ==================================================================
     # Mode switching
@@ -710,6 +782,14 @@ class MainWindow(QMainWindow):
             self._append_log(f"[WARN] STREAM ON failed: {e} (data stream disabled)")
 
     def _disconnect(self):
+        # Cancel any active calibration
+        if self._calibrating and self._cal_manager:
+            self._cal_manager.cancel()
+        self._calibrating = False
+        self._cal_manager = None
+        self._cal_min_flow = None
+        self._cal_max_flow = None
+
         if self._ctrl:
             try:
                 self._ctrl.stream_off()
@@ -721,6 +801,19 @@ class MainWindow(QMainWindow):
         self._status_timer.stop()
         self._conn_check_timer.stop()
         self._hw_scan_timer.stop()
+
+        # Reset calibration UI
+        self.cal_progress_bar.setValue(0)
+        self.lbl_cal_status.setText("Not calibrated")
+        self.lbl_cal_status.setStyleSheet("color: gray;")
+        self.lbl_cal_range.setText("")
+        self.btn_cal_cancel.setEnabled(False)
+
+        # Reset PID target slider (no calibration = no range)
+        self.slider_pid_target.setRange(0, 0)
+        self.spin_pid_target.setRange(0, 0)
+        self.lbl_pid_cal_hint.setText("Calibrate tube first to enable PID")
+        self.lbl_pid_cal_hint.setStyleSheet("color: #9C27B0; font-style: italic;")
 
         # Reset recording state
         if self._recording:
@@ -774,16 +867,24 @@ class MainWindow(QMainWindow):
             self.btn_pump_on, self.btn_pump_off,
             self.slider_amp, self.spin_amp,
             self.slider_freq, self.spin_freq,
-            self.btn_pid_start,
-            self.spin_pid_target, self.spin_pid_duration,
-            self.spin_kp, self.spin_ki, self.spin_kd,
             self.btn_i2c_scan, self.btn_status,
             self.combo_calibration,
             self.btn_record,
+            self.btn_calibrate,
         ]:
             w.setEnabled(enabled)
+        # PID controls: only enable if calibrated
+        pid_enabled = enabled and self._cal_min_flow is not None
+        for w in [
+            self.btn_pid_start,
+            self.slider_pid_target, self.spin_pid_target,
+            self.spin_pid_duration,
+            self.spin_kp, self.spin_ki, self.spin_kd,
+        ]:
+            w.setEnabled(pid_enabled)
         if not enabled:
             self.btn_pid_stop.setEnabled(False)
+            self.btn_cal_cancel.setEnabled(False)
 
     def _update_hw_labels(self):
         """Update hardware availability labels in status bar."""
@@ -821,18 +922,24 @@ class MainWindow(QMainWindow):
         if not self._sensor_available:
             self.combo_calibration.setEnabled(False)
 
-        if not self._sensor_available or not self._pump_available:
+        # PID requires: pump + sensor + calibration
+        if not self._sensor_available or not self._pump_available or self._cal_min_flow is None:
             for w in [self.btn_pid_start,
-                       self.spin_pid_target, self.spin_pid_duration,
+                       self.slider_pid_target, self.spin_pid_target,
+                       self.spin_pid_duration,
                        self.spin_kp, self.spin_ki, self.spin_kd]:
                 w.setEnabled(False)
-            reason = []
-            if not self._pump_available:
-                reason.append("pump")
-            if not self._sensor_available:
-                reason.append("sensor")
-            self.lbl_pid_feedback.setText(f"PID: unavailable ({', '.join(reason)} not detected)")
-            self.lbl_pid_feedback.setStyleSheet("color: red; font-weight: bold;")
+            if not self._pump_available or not self._sensor_available:
+                reason = []
+                if not self._pump_available:
+                    reason.append("pump")
+                if not self._sensor_available:
+                    reason.append("sensor")
+                self.lbl_pid_feedback.setText(f"PID: unavailable ({', '.join(reason)} not detected)")
+                self.lbl_pid_feedback.setStyleSheet("color: red; font-weight: bold;")
+            elif self._cal_min_flow is None:
+                self.lbl_pid_feedback.setText("PID: calibrate tube first")
+                self.lbl_pid_feedback.setStyleSheet("color: #9C27B0; font-weight: bold;")
 
     # ==================================================================
     # Hot-plug hardware re-scan (every 5s)
@@ -907,9 +1014,11 @@ class MainWindow(QMainWindow):
             if self._sensor_available:
                 self.combo_calibration.setEnabled(True)
 
-            if self._pump_available and self._sensor_available and not self._pid_running:
+            if (self._pump_available and self._sensor_available
+                    and not self._pid_running and self._cal_min_flow is not None):
                 for w in [self.btn_pid_start,
-                           self.spin_pid_target, self.spin_pid_duration,
+                           self.slider_pid_target, self.spin_pid_target,
+                           self.spin_pid_duration,
                            self.spin_kp, self.spin_ki, self.spin_kd]:
                     w.setEnabled(True)
                 self.lbl_pid_feedback.setText("PID: idle")
@@ -1012,15 +1121,15 @@ class MainWindow(QMainWindow):
         """Send PID TARGET with current target value (called after debounce)."""
         if not self._pid_running or not self._ctrl or not self._ctrl.is_connected:
             return
-        target = self.spin_pid_target.value()
+        target = float(self.spin_pid_target.value())
         threading.Thread(
             target=self._bg_cmd, args=(self._ctrl.pid_set_target, target), daemon=True
         ).start()
         # Update chart target line
         self._pid_target = target
         self.target_line.setValue(target)
-        self.lbl_pid_feedback.setText(f"PID: running (target={target:.2f} ul/min)")
-        self._append_log(f"[PID] Live target: {target:.2f} ul/min")
+        self.lbl_pid_feedback.setText(f"PID: running (target={target:.0f} ul/min, FREQ=200)")
+        self._append_log(f"[PID] Live target: {target:.0f} ul/min")
 
     def _bg_cmd(self, func, *args):
         """Run a controller command in background (fire-and-forget)."""
@@ -1086,10 +1195,12 @@ class MainWindow(QMainWindow):
                 self.target_line.setVisible(True)
                 self.btn_pid_start.setEnabled(False)
                 self.btn_pid_stop.setEnabled(True)
+                self.slider_pid_target.setEnabled(True)
+                self.spin_pid_target.setEnabled(True)
                 self.spin_pid_duration.setEnabled(False)
                 self.combo_mode.setEnabled(False)
                 self.lbl_pid_feedback.setText(
-                    f"PID: running (target={self._pid_target:.2f} ul/min)")
+                    f"PID: running (target={self._pid_target:.0f} ul/min, FREQ=200)")
                 self.lbl_pid_feedback.setStyleSheet("color: #2196F3; font-weight: bold;")
             else:
                 self.btn_pid_start.setEnabled(True)
@@ -1130,7 +1241,9 @@ class MainWindow(QMainWindow):
                 self._append_log(f"I2C scan failed: {err}")
 
     def _cmd_pid_start(self):
-        target = self.spin_pid_target.value()
+        if self._cal_min_flow is None or self._cal_max_flow is None:
+            return  # PID requires calibration
+        target = float(self.spin_pid_target.value())
         duration = self.spin_pid_duration.value()
 
         # Confirmation dialog
@@ -1138,20 +1251,26 @@ class MainWindow(QMainWindow):
             dur_str = f"{duration} seconds"
         else:
             dur_str = "indefinitely (no time limit)"
+        range_info = f"\n  Calibrated range: [{self._cal_min_flow:.1f}, {self._cal_max_flow:.1f}] ul/min"
         reply = QMessageBox.question(
             self, "Start PID",
             f"Start PID control?\n\n"
-            f"  Target: {target:.2f} ul/min\n"
+            f"  Target: {target:.0f} ul/min\n"
             f"  Duration: {dur_str}\n"
+            f"  FREQ: 200 Hz (fixed)"
+            f"{range_info}\n"
             f"  Gains: Kp={self.spin_kp.value()}, Ki={self.spin_ki.value()}, Kd={self.spin_kd.value()}\n\n"
-            f"Pump will start automatically.",
+            f"Pump will start automatically (adjusts amplitude at FREQ=200).",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
 
-        # Disable button and run tune+start in background
+        # Disable controls and run freq+tune+start in background
         self.btn_pid_start.setEnabled(False)
+        self.slider_pid_target.setEnabled(False)
+        self.spin_pid_target.setEnabled(False)
+        self.btn_calibrate.setEnabled(False)  # Disable calibration during PID
         self.lbl_pid_feedback.setText("PID: starting...")
         self.lbl_pid_feedback.setStyleSheet("color: orange; font-weight: bold;")
         self._pending_pid_target = target
@@ -1159,6 +1278,7 @@ class MainWindow(QMainWindow):
         ki = self.spin_ki.value()
         kd = self.spin_kd.value()
         self._bg_cmd_seq("pid_start", [
+            (self._ctrl.set_frequency, 200),   # Always FREQ=200 for PID
             (self._ctrl.pid_tune, kp, ki, kd),
             (self._ctrl.pid_start, target, duration),
         ])
@@ -1184,14 +1304,19 @@ class MainWindow(QMainWindow):
         self._pid_target = None
         self.target_line.setVisible(False)
 
-        self.btn_pid_start.setEnabled(True)
+        calibrated = self._cal_min_flow is not None
+        hw_ok = self._pump_available and self._sensor_available
+        pid_enabled = calibrated and hw_ok
+        self.btn_pid_start.setEnabled(pid_enabled)
         self.btn_pid_stop.setEnabled(False)
-        self.spin_pid_target.setEnabled(True)
-        self.spin_pid_duration.setEnabled(True)
-        self.spin_kp.setEnabled(True)
-        self.spin_ki.setEnabled(True)
-        self.spin_kd.setEnabled(True)
+        self.slider_pid_target.setEnabled(pid_enabled)
+        self.spin_pid_target.setEnabled(pid_enabled)
+        self.spin_pid_duration.setEnabled(pid_enabled)
+        self.spin_kp.setEnabled(pid_enabled)
+        self.spin_ki.setEnabled(pid_enabled)
+        self.spin_kd.setEnabled(pid_enabled)
         self.combo_mode.setEnabled(True)
+        self.btn_calibrate.setEnabled(True)  # Re-enable calibration
 
         self.lbl_pid_elapsed.setText("")
 
@@ -1231,10 +1356,153 @@ class MainWindow(QMainWindow):
             )
 
     # ==================================================================
+    # Tube Calibration
+    # ==================================================================
+
+    def _cmd_calibrate(self):
+        """Start tube calibration sequence."""
+        if not self._ctrl or not self._ctrl.is_connected:
+            return
+        if not self._pump_available or not self._sensor_available:
+            QMessageBox.warning(
+                self, "Calibration",
+                "Calibration requires both pump driver and flow sensor.")
+            return
+
+        # Disable controls during calibration
+        self._calibrating = True
+        self.btn_calibrate.setEnabled(False)
+        self.btn_cal_cancel.setEnabled(True)
+        self.cal_progress_bar.setValue(0)
+        self.lbl_cal_status.setText("Calibrating...")
+        self.lbl_cal_status.setStyleSheet("color: #9C27B0; font-weight: bold;")
+        self.lbl_cal_range.setText("")
+
+        # Disable pump/PID controls during calibration
+        for w in [self.btn_pump_on, self.btn_pump_off,
+                   self.slider_amp, self.spin_amp,
+                   self.slider_freq, self.spin_freq,
+                   self.btn_pid_start, self.combo_mode]:
+            w.setEnabled(False)
+
+        # Create and start calibration manager
+        self._cal_manager = TubeCalibrationManager(self._ctrl)
+        self._cal_manager.on_progress = (
+            lambda pct, msg: self._bridge.cal_progress.emit(pct, msg))
+        self._cal_manager.on_completed = (
+            lambda result: self._bridge.cal_completed.emit(result))
+        self._cal_manager.on_failed = (
+            lambda err: self._bridge.cal_failed.emit(err))
+
+        threading.Thread(target=self._cal_manager.run, daemon=True).start()
+        self._append_log("[CAL] Tube calibration started")
+
+    def _cmd_cal_cancel(self):
+        """Cancel ongoing calibration."""
+        if self._cal_manager:
+            self._cal_manager.cancel()
+            self.btn_cal_cancel.setEnabled(False)
+            self.lbl_cal_status.setText("Cancelling...")
+            self.lbl_cal_status.setStyleSheet("color: orange; font-weight: bold;")
+            self._append_log("[CAL] Calibration cancel requested")
+            # Cleanup will happen when the thread finishes — use a short timer
+            QTimer.singleShot(1000, self._cal_cleanup_after_cancel)
+
+    def _cal_cleanup_after_cancel(self):
+        """Restore UI after calibration cancel."""
+        if self._calibrating:
+            self._calibrating = False
+            self._cal_manager = None
+            self._cal_restore_controls()
+            self.cal_progress_bar.setValue(0)
+            self.lbl_cal_status.setText("Cancelled")
+            self.lbl_cal_status.setStyleSheet("color: gray;")
+            self._append_log("[CAL] Calibration cancelled")
+
+    def _on_cal_progress(self, percent: int, message: str):
+        """Update calibration progress (GUI thread)."""
+        self.cal_progress_bar.setValue(percent)
+        self.lbl_cal_status.setText(message)
+
+    def _on_cal_completed(self, result: CalibrationResult):
+        """Handle successful calibration (GUI thread)."""
+        self._calibrating = False
+        self._cal_manager = None
+        self._cal_min_flow = result.min_flow
+        self._cal_max_flow = result.max_flow
+
+        self.cal_progress_bar.setValue(100)
+        self.lbl_cal_status.setText("Calibration complete")
+        self.lbl_cal_status.setStyleSheet("color: green; font-weight: bold;")
+
+        range_text = f"Range: {result.min_flow:.1f} - {result.max_flow:.1f} ul/min"
+        if result.sensor_saturated:
+            range_text += " (sensor saturated at max)"
+        self.lbl_cal_range.setText(range_text)
+        self.lbl_cal_range.setStyleSheet("color: #2196F3; font-weight: bold;")
+
+        # Update PID target slider range to calibrated range
+        lo = int(result.min_flow)
+        hi = int(result.max_flow)
+        mid = (lo + hi) // 2
+        self.slider_pid_target.setRange(lo, hi)
+        self.spin_pid_target.setRange(lo, hi)
+        self.slider_pid_target.setValue(mid)
+        self.spin_pid_target.setValue(mid)
+        self.lbl_pid_cal_hint.setText(
+            f"Range: {result.min_flow:.1f} - {result.max_flow:.1f} ul/min")
+        self.lbl_pid_cal_hint.setStyleSheet("color: green; font-style: italic;")
+
+        self._cal_restore_controls()
+        self._append_log(
+            f"[CAL] Complete: range=[{result.min_flow:.1f}, {result.max_flow:.1f}] ul/min"
+            + (" (sensor saturated)" if result.sensor_saturated else ""))
+
+    def _on_cal_failed(self, error: str):
+        """Handle calibration failure (GUI thread)."""
+        self._calibrating = False
+        self._cal_manager = None
+
+        self.cal_progress_bar.setValue(0)
+        self.lbl_cal_status.setText(f"Failed: {error}")
+        self.lbl_cal_status.setStyleSheet("color: red; font-weight: bold;")
+
+        self._cal_restore_controls()
+        self._append_log(f"[CAL] Failed: {error}")
+
+    def _cal_restore_controls(self):
+        """Re-enable controls after calibration ends."""
+        self.btn_calibrate.setEnabled(True)
+        self.btn_cal_cancel.setEnabled(False)
+
+        # Restore pump controls based on hardware availability
+        if self._pump_available:
+            for w in [self.btn_pump_on, self.btn_pump_off,
+                       self.slider_amp, self.spin_amp,
+                       self.slider_freq, self.spin_freq]:
+                w.setEnabled(True)
+        self.combo_mode.setEnabled(True)
+
+        # PID: only enable if calibrated + hardware available
+        if (self._pump_available and self._sensor_available
+                and self._cal_min_flow is not None):
+            for w in [self.btn_pid_start,
+                       self.slider_pid_target, self.spin_pid_target,
+                       self.spin_pid_duration,
+                       self.spin_kp, self.spin_ki, self.spin_kd]:
+                w.setEnabled(True)
+            self.lbl_pid_feedback.setText("PID: ready")
+            self.lbl_pid_feedback.setStyleSheet("color: green; font-weight: bold;")
+
+    # ==================================================================
     # Data callbacks (from SignalBridge, runs on GUI thread)
     # ==================================================================
 
     def _on_data(self, flow: float, temperature: float):
+        # Feed flow data to calibration manager if active
+        if self._calibrating and self._cal_manager:
+            self._cal_manager.feed_flow_data(flow)
+
         # Skip flow data if sensor is not available
         if not self._sensor_available:
             return
@@ -1288,12 +1556,18 @@ class MainWindow(QMainWindow):
         self._append_log("[EVENT] AIR_CLEAR: Air-in-line condition resolved")
 
     def _on_high_flow(self):
+        # Forward to calibration manager
+        if self._calibrating and self._cal_manager:
+            self._cal_manager.notify_high_flow()
         self.lbl_alert.setText("HIGH_FLOW: Flow rate exceeds sensor range!")
         self.lbl_alert.setStyleSheet("color: red; font-weight: bold;")
         self.btn_dismiss_alert.setVisible(False)
         self._append_log("[EVENT] HIGH_FLOW: Flow rate exceeds sensor range")
 
     def _on_high_flow_clear(self):
+        # Forward to calibration manager
+        if self._calibrating and self._cal_manager:
+            self._cal_manager.notify_high_flow_clear()
         if self.lbl_alert.text().startswith("HIGH_FLOW:"):
             self.lbl_alert.setText("No alerts")
             self.lbl_alert.setStyleSheet("")
