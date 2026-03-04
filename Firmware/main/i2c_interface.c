@@ -228,7 +228,7 @@ esp_err_t i2c_interface_scan(uint8_t *devices, uint8_t max_devices, uint8_t *num
 
     // ESP_LOGI(TAG, "Scanning I2C bus...");
 
-    for (uint8_t addr = 0x03; addr < 0x78; addr++) {
+    for (uint8_t addr = 0x03; addr <= 0x78; addr++) {
         if (i2c_interface_probe(addr) == ESP_OK) {
             // ESP_LOGI(TAG, "  Found device at address: 0x%02X", addr);
 

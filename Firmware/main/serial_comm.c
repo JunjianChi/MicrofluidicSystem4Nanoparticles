@@ -113,14 +113,14 @@ void serial_comm_send_err(const char *reason)
     serial_comm_send("ERR %s\n", reason);
 }
 
-void serial_comm_send_data(float flow, float temperature)
+void serial_comm_send_data(float flow, float temperature, float pressure)
 {
-    serial_comm_send("D %.2f %.2f\n", flow, temperature);
+    serial_comm_send("D %.2f %.2f %.4f\n", flow, temperature, pressure);
 }
 
 void serial_comm_send_status(const system_state_t *state)
 {
-    serial_comm_send("S %s %d %d %d %.2f %.2f %d %d %d %d %d %.2f %d %d\n",
+    serial_comm_send("S %s %d %d %d %.2f %.2f %d %d %d %d %d %.2f %.4f %d %d\n",
                      (state->mode == MODE_PID) ? "PID" : "MANUAL",
                      state->pump_on ? 1 : 0,
                      (int)state->amplitude,
@@ -133,6 +133,7 @@ void serial_comm_send_status(const system_state_t *state)
                      state->sensor_available ? 1 : 0,
                      state->pressure_available ? 1 : 0,
                      state->current_temperature,
+                     state->current_pressure,
                      state->air_in_line ? 1 : 0,
                      state->high_flow ? 1 : 0);
 }

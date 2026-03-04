@@ -22,8 +22,8 @@
  *      - In PID mode: pid_compute() -> mp6_set_amplitude() every 20ms
  *      - Checks PID flow deviation (>20% for >10s -> FLOW_ERR event)
  *      - Checks PID duration expiry (auto-stop -> PID_DONE event)
- *      - Sends data stream "D <flow> <temp>" when stream_enabled is true
- *      - Every 5s: re-probes I2C bus for unavailable devices (hot-plug)
+ *      - Sends data stream "D <flow> <temp> <pressure>" when stream_enabled is true
+ *      - Every 2s: re-probes I2C bus for unavailable devices (hot-plug)
  *
  *  Why sensor_read_task has higher priority:
  *    Guarantees 10Hz sampling is not delayed by serial command processing.
@@ -57,6 +57,7 @@
 #include "sensor_config.h"
 #include "mp6_driver.h"
 #include "SLF3S_flow_sensor.h"
+#include "abp_pressure_sensor.h"
 #include "serial_comm.h"
 #include "pid_controller.h"
 
@@ -109,7 +110,7 @@ static SemaphoreHandle_t g_state_mutex;
  *   app_cmd_pid_stop()        - pid_stop, mp6_stop, switch to MODE_MANUAL
  *   app_cmd_pid_target()      - pid_set_target (update target while running)
  *   app_cmd_pid_tune()        - pid_set_gains (Kp, Ki, Kd)
- *   app_cmd_status()          - serial_comm_send_status (12-field response)
+ *   app_cmd_status()          - serial_comm_send_status (15-field response)
  *   app_cmd_scan()            - i2c_interface_scan + serial_comm_send_scan
  *   app_cmd_set_calibration() - stop measurement, switch cal, restart
  ********************************************************/
@@ -309,14 +310,18 @@ static void sensor_read_task(void *param)
     uint32_t tick_count = 0;
     const uint32_t ticks_per_second = 1000 / SENSOR_INTERVAL_MS;
 
-    /* Hot-plug re-probe counter (every 5 seconds) */
+    /* Hot-plug re-probe counter (every 2 seconds) */
     uint32_t reprobe_count = 0;
-    const uint32_t REPROBE_TICKS = 5 * ticks_per_second;
+    const uint32_t REPROBE_TICKS = 2 * ticks_per_second;
+
+    /* Skip-read flags: after reprobe init, skip one read cycle to let sensor settle */
+    bool flow_just_inited = false;
+    bool pressure_just_inited = false;
 
     while (1) {
         vTaskDelayUntil(&last_wake, interval);
 
-        /* --- Hot-plug: re-probe unavailable devices every 5s --- */
+        /* --- Hot-plug: re-probe unavailable devices every 2s --- */
         reprobe_count++;
         if (reprobe_count >= REPROBE_TICKS) {
             reprobe_count = 0;
@@ -338,22 +343,46 @@ static void sensor_read_task(void *param)
                         STATE_LOCK();
                         g_state.sensor_available = true;
                         STATE_UNLOCK();
+                        flow_just_inited = true;  /* skip first read */
                     }
                 }
             }
 
             if (!g_state.pressure_available) {
                 if (i2c_interface_probe(PRESSURE_SENSOR_I2C_ADDR) == ESP_OK) {
-                    STATE_LOCK();
-                    g_state.pressure_available = true;
-                    STATE_UNLOCK();
+                    if (abp_init(&g_state.pressure_sensor) == ESP_OK) {
+                        STATE_LOCK();
+                        g_state.pressure_available = true;
+                        STATE_UNLOCK();
+                        pressure_just_inited = true;  /* skip first read */
+                    }
                 }
             }
         }
 
-        /* Read flow sensor (skip if unavailable) */
+        /* Read pressure sensor (skip if unavailable or just initialized) */
+        float pressure = 0.0f;
+        if (g_state.pressure_available) {
+            if (pressure_just_inited) {
+                pressure_just_inited = false;  /* settle: skip this cycle */
+            } else if (abp_read_pressure(&g_state.pressure_sensor, &pressure) == ESP_OK) {
+                STATE_LOCK();
+                g_state.current_pressure = pressure;
+                STATE_UNLOCK();
+            } else {
+                STATE_LOCK();
+                g_state.pressure_available = false;
+                g_state.current_pressure = 0.0f;
+                STATE_UNLOCK();
+                ESP_LOGW(TAG, "Pressure sensor disconnected");
+            }
+        }
+
+        /* Read flow sensor (skip if unavailable or just initialized) */
         float flow = 0.0f;
-        if (g_state.sensor_available) {
+        if (g_state.sensor_available && flow_just_inited) {
+            flow_just_inited = false;  /* settle: skip this cycle */
+        } else if (g_state.sensor_available) {
             slf3s_measurement_t meas = {0};
             esp_err_t ret = slf3s_read_measurement(&g_state.flow_sensor, &meas);
             if (ret == ESP_OK) {
@@ -380,6 +409,13 @@ static void sensor_read_task(void *param)
                 if (emit_air_clear)  serial_comm_send_event_air_clear();
                 if (emit_high_set)   serial_comm_send_event_high_flow();
                 if (emit_high_clear) serial_comm_send_event_high_flow_clear();
+            } else {
+                STATE_LOCK();
+                g_state.sensor_available = false;
+                g_state.current_flow = 0.0f;
+                g_state.current_temperature = 0.0f;
+                STATE_UNLOCK();
+                ESP_LOGW(TAG, "Flow sensor disconnected");
             }
         }
 
@@ -435,10 +471,11 @@ static void sensor_read_task(void *param)
         /* Send data stream if enabled */
         bool stream = g_state.stream_enabled;
         float temp = g_state.current_temperature;
+        float pres = g_state.current_pressure;
         STATE_UNLOCK();
 
         if (stream) {
-            serial_comm_send_data(flow, temp);
+            serial_comm_send_data(flow, temp, pres);
         }
     }
 }
@@ -450,7 +487,7 @@ static void sensor_read_task(void *param)
  * Any hardware that fails to probe or init is simply marked
  * unavailable (pump_available / sensor_available / pressure_available
  * remain false).  Tasks always start regardless of hardware state.
- * Missing devices are re-probed every 5s by sensor_read_task.
+ * Missing devices are re-probed every 2s by sensor_read_task.
  ********************************************************/
 
 static esp_err_t hw_init(void)
@@ -490,28 +527,36 @@ static esp_err_t hw_init(void)
     }
 
     /* Detect flow sensor (SLF3S at 0x08)
-     * SLF3S needs ~25ms after power-on before accepting I2C commands.
-     * Add a short delay to avoid init failure on cold boot. */
-    vTaskDelay(pdMS_TO_TICKS(50));
-    if (i2c_interface_probe(SLF3S_I2C_ADDR) == ESP_OK) {
-        ret = slf3s_init(&g_state.flow_sensor);
-        if (ret == ESP_OK) {
-            ret = slf3s_start_measurement(&g_state.flow_sensor);
+     * SLF3S needs time after power-on before accepting I2C commands.
+     * Retry up to 3 times with increasing delay to handle bus settling. */
+    for (int attempt = 0; attempt < 3 && !g_state.sensor_available; attempt++) {
+        vTaskDelay(pdMS_TO_TICKS(100 + attempt * 200));
+        if (i2c_interface_probe(SLF3S_I2C_ADDR) == ESP_OK) {
+            ret = slf3s_init(&g_state.flow_sensor);
+            if (ret == ESP_OK) {
+                ret = slf3s_start_measurement(&g_state.flow_sensor);
+            }
+            if (ret == ESP_OK) {
+                g_state.sensor_available = true;
+                ESP_LOGI(TAG, "Flow sensor detected (SLF3S at 0x%02X, attempt %d)", SLF3S_I2C_ADDR, attempt + 1);
+            } else {
+                ESP_LOGW(TAG, "Flow sensor init attempt %d failed, retrying...", attempt + 1);
+            }
         }
-        if (ret == ESP_OK) {
-            g_state.sensor_available = true;
-            ESP_LOGI(TAG, "Flow sensor detected (SLF3S at 0x%02X)", SLF3S_I2C_ADDR);
-        } else {
-            ESP_LOGW(TAG, "Flow sensor found but init failed");
-        }
-    } else {
+    }
+    if (!g_state.sensor_available) {
         ESP_LOGW(TAG, "Flow sensor not detected (no device at 0x%02X)", SLF3S_I2C_ADDR);
     }
 
-    /* Detect pressure sensor (0x76) - detection only, no driver yet */
+    /* Detect pressure sensor (Honeywell ABP at 0x78) */
     if (i2c_interface_probe(PRESSURE_SENSOR_I2C_ADDR) == ESP_OK) {
-        g_state.pressure_available = true;
-        ESP_LOGI(TAG, "Pressure sensor detected (at 0x%02X)", PRESSURE_SENSOR_I2C_ADDR);
+        ret = abp_init(&g_state.pressure_sensor);
+        if (ret == ESP_OK) {
+            g_state.pressure_available = true;
+            ESP_LOGI(TAG, "Pressure sensor detected (ABP at 0x%02X)", PRESSURE_SENSOR_I2C_ADDR);
+        } else {
+            ESP_LOGW(TAG, "Pressure sensor found but init failed");
+        }
     } else {
         ESP_LOGW(TAG, "Pressure sensor not detected (no device at 0x%02X)", PRESSURE_SENSOR_I2C_ADDR);
     }

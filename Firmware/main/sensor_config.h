@@ -139,11 +139,11 @@ typedef enum {
  *   0x08  SLF3S flow sensor     (flow, temperature, signaling flags)
  *   0x48  Temperature sensor    (TMP117 or similar, reserved)
  *   0x61  MCP4726 DAC           (amplitude output for MP-Driver)
- *   0x76  Pressure sensor       (MS5837 or similar, reserved)
+ *   0x78  Pressure sensor       (Honeywell ABP ABPMANV015PG7A5)
  ********************************************************/
 
-/* Pressure Sensor (example: MS5837 or similar) */
-#define PRESSURE_SENSOR_I2C_ADDR    0x76
+/* Pressure Sensor (Honeywell ABP ABPMANV015PG7A5) */
+#define PRESSURE_SENSOR_I2C_ADDR    0x78
 
 /* Temperature Sensor (example: TMP117 or similar) */
 #define TEMPERATURE_SENSOR_I2C_ADDR 0x48
