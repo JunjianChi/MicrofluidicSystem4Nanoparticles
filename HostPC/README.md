@@ -1,6 +1,6 @@
 # Microfluidic Control System - GUI User Guide
 
-> **GUI V1.0.0** | PyQt5 + pyqtgraph | Python 3.8+
+> **GUI V1.1.0** | PyQt5 + pyqtgraph | Python 3.8+
 
 This document covers every feature of the Host PC graphical user interface for the ESP32 microfluidic control system. For system-level documentation (hardware, firmware, wiring), see the [root README](../README.md).
 
@@ -20,6 +20,8 @@ This document covers every feature of the Host PC graphical user interface for t
 10. [Communication Log](#10-communication-log)
 11. [Python API Scripting](#11-python-api-scripting)
 12. [Troubleshooting](#12-troubleshooting)
+13. [Tube Calibration](#13-tube-calibration)
+14. [Fluent Theme](#14-fluent-theme)
 
 ---
 
@@ -87,13 +89,13 @@ The GUI performs these steps automatically:
 3. **I2C Scan** -- sends `SCAN` to detect connected hardware:
    - `0x61` (MCP4726 DAC) -> pump driver available
    - `0x08` (SLF3S) -> flow sensor available
-   - `0x76` -> pressure sensor available
+   - `0x78` -> pressure sensor available
 4. **Update hardware status labels** in the status bar.
 5. **Enable data stream** -- sends `STREAM ON` to start receiving 10 Hz flow data.
 6. **Start timers**:
    - Status poll: every 1 second
    - Connection health check: every 2 seconds
-   - Hardware hot-plug re-scan: every 5 seconds
+   - Hardware availability: detected via STATUS polling (every 1 second)
 
 ### Auto-Disconnect Detection
 
@@ -185,7 +187,7 @@ PID mode enables closed-loop flow rate control. The firmware's PID controller au
 │ Duration:  [     0   ] sec (Infinite) │
 │                                       │
 │ PID Gains:                            │
-│ Kp [1.0000]  Ki [0.1000]  Kd [0.0100]│
+│ Kp [0.8000]  Ki [3.0000]  Kd [0.0000]│
 │                                       │
 │ [ START PID ]  [ STOP PID ]           │
 │                                       │
@@ -200,9 +202,9 @@ PID mode enables closed-loop flow rate control. The firmware's PID controller au
 |-----------|-------|---------|-------------|
 | Target | 0.01 - 3250.00 ul/min | 10.00 | Desired flow rate |
 | Duration | 0 - 99999 seconds | 0 (Infinite) | How long to run PID. 0 = no time limit. |
-| Kp | 0 - 9999 | 1.0 | Proportional gain |
-| Ki | 0 - 9999 | 0.1 | Integral gain |
-| Kd | 0 - 9999 | 0.01 | Derivative gain |
+| Kp | 0 - 9999 | 0.8 | Proportional gain |
+| Ki | 0 - 9999 | 3.0 | Integral gain |
+| Kd | 0 - 9999 | 0.0 | Derivative gain |
 
 ### START PID Sequence
 
@@ -251,7 +253,7 @@ The GUI has two chart tabs powered by `pyqtgraph`:
 | Tab | Y-Axis | Color | Data Source |
 |-----|--------|-------|-------------|
 | **Flow Rate** | Flow Rate (ul/min) | Blue (#2196F3) | `D <flow>` data stream |
-| **Pressure** | Pressure (mbar) | Orange (#FF9800) | Pressure sensor (when available) |
+| **Pressure** | Pressure (mbar) | Orange (#FF9800) | Pressure sensor (when available). Data is converted from bar to mbar for display. |
 
 Both charts have auto-scaling Y-axis and show approximately 60 seconds of data (600 points at 10 Hz).
 
@@ -292,13 +294,13 @@ The chart refreshes every **100 ms** (10 Hz), matching the data stream rate.
 
 ### CSV Format
 
-The exported CSV file has three columns:
+The exported CSV file has four columns:
 
 ```csv
-time_s,flow_ul_min,temperature_c
-0.000,12.50,23.1
-0.100,12.48,23.1
-0.200,12.55,23.1
+time_s,flow_ul_min,temperature_c,pressure_mbar
+0.000,12.50,23.1,3.45
+0.100,12.48,23.1,3.44
+0.200,12.55,23.1,3.46
 ...
 ```
 
@@ -307,6 +309,7 @@ time_s,flow_ul_min,temperature_c
 | `time_s` | float | Time in seconds since recording started |
 | `flow_ul_min` | float | Flow rate in ul/min |
 | `temperature_c` | float | Temperature in degrees Celsius |
+| `pressure_mbar` | float | Pressure in millibar |
 
 ### Default Filename
 
@@ -340,6 +343,8 @@ The alert panel shows the most recent event notification. Alerts are **edge-trig
 | `AIR_IN_LINE` | Orange | Sensor flag bit 0 transitions 0->1 | Air bubble detected in the flow path. Likely causes: inadequate priming, tubing leak, empty reservoir. |
 | `HIGH_FLOW` | Red | Sensor flag bit 1 transitions 0->1 | Flow rate exceeds the sensor measurement range. Reduce pump amplitude/frequency. |
 | `FLOW_ERR` | Red | Flow deviates >20% from PID target for >10 seconds | PID cannot maintain the target. Possible causes: bubble, blockage, target unachievable. Shows both target and actual values. |
+| `AIR_CLEAR` | Green | Air-in-line condition resolved | Air bubble has cleared the flow path |
+| `HIGH_FLOW_CLEAR` | Green | High-flow condition resolved | Flow rate back within sensor range |
 | `PID_DONE` | Blue | PID duration expires | PID control completed normally. Also triggers a popup dialog. |
 
 ### Behavior
@@ -371,13 +376,13 @@ The status bar runs across the bottom of the dashboard:
 | Pump | STATUS poll (1s) | `ON` (green) or `OFF` (gray) |
 | Flow | Data stream (10 Hz) | Current flow reading in ul/min |
 | Temp | Data stream (10 Hz) | Current temperature in degrees C |
-| Driver | I2C scan (5s) | `OK` (green) if MCP4726 at 0x61 detected, `N/A` (red) otherwise |
-| Flow Sensor | I2C scan (5s) | `OK` (green) if SLF3S at 0x08 detected, `N/A` (red) otherwise |
-| Pressure | I2C scan (5s) | `OK` (green) if sensor at 0x76 detected, `N/A` (red) otherwise |
+| Driver | STATUS poll (1s) | `OK` (green) if MCP4726 at 0x61 detected, `N/A` (red) otherwise |
+| Flow Sensor | STATUS poll (1s) | `OK` (green) if SLF3S at 0x08 detected, `N/A` (red) otherwise |
+| Pressure | STATUS poll (1s) | `OK` (green) if sensor at 0x78 detected, `N/A` (red) otherwise |
 
-### Hot-Plug Detection (5-Second Re-Scan)
+### Hot-Plug Detection (STATUS Polling)
 
-Every 5 seconds, the GUI sends a `SCAN` command and checks which I2C addresses are present:
+Hardware availability is now detected via the STATUS poll that runs every 1 second. The STATUS response includes hardware availability flags, eliminating the need for a separate periodic I2C scan. The initial I2C scan on connect still happens to establish baseline hardware state.
 
 - If a device **appears** (was N/A, now detected): the GUI logs `[HOT-PLUG] <device> detected` and re-enables the associated controls.
 - If a device **disappears** (was OK, now gone): the GUI logs `[HOT-PLUG] <device> disconnected` and disables the associated controls.
@@ -418,7 +423,7 @@ Known addresses:
 |---------|--------|
 | 0x08 | SLF3S flow sensor |
 | 0x61 | MCP4726 DAC (pump amplitude control) |
-| 0x76 | Pressure sensor (reserved) |
+| 0x78 | Pressure sensor (reserved) |
 | 0x48 | Temperature sensor (reserved) |
 
 ### STATUS Query
@@ -542,8 +547,8 @@ with MicrofluidicController("COM3") as ctrl:
 import time
 from microfluidic_api import MicrofluidicController
 
-def on_data(flow, temperature):
-    print(f"Flow: {flow:.2f} ul/min, Temp: {temperature:.1f} C")
+def on_data(flow, temperature, pressure):
+    print(f"Flow: {flow:.2f} ul/min, Temp: {temperature:.1f} C, Pressure: {pressure:.2f} mbar")
 
 def on_pid_done():
     print("[EVENT] PID completed!")
@@ -579,14 +584,14 @@ from microfluidic_api import MicrofluidicController
 
 results = []
 
-def on_data(flow, temperature):
-    results.append((time.time(), flow, temperature))
+def on_data(flow, temperature, pressure):
+    results.append((time.time(), flow, temperature, pressure))
 
 with MicrofluidicController("COM3") as ctrl:
     ctrl.on_data = on_data
 
     # Set PID gains
-    ctrl.pid_tune(kp=1.0, ki=0.1, kd=0.01)
+    ctrl.pid_tune(kp=0.8, ki=3.0, kd=0.0)
 
     # Start PID: target 15 ul/min for 300 seconds
     ctrl.pid_start(target_flow=15.0, duration_s=300)
@@ -601,7 +606,7 @@ with MicrofluidicController("COM3") as ctrl:
 import csv
 with open("pid_experiment.csv", "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["timestamp", "flow_ul_min", "temperature_c"])
+    writer.writerow(["timestamp", "flow_ul_min", "temperature_c", "pressure_mbar"])
     writer.writerows(results)
 ```
 
@@ -658,11 +663,13 @@ with open("pid_experiment.csv", "w", newline="") as f:
 
 | Callback | Signature | Trigger |
 |----------|-----------|---------|
-| `on_data` | `(flow: float, temperature: float)` | Every 100 ms when stream is ON |
+| `on_data` | `(flow: float, temperature: float, pressure: float)` | Every 100 ms when stream is ON |
 | `on_pid_done` | `()` | PID duration expired |
 | `on_flow_err` | `(target: float, actual: float)` | Sustained flow deviation |
 | `on_air_in_line` | `()` | Air bubble detected (edge-triggered) |
 | `on_high_flow` | `()` | Flow exceeds sensor range (edge-triggered) |
+| `on_air_clear` | `()` | Air-in-line condition resolved |
+| `on_high_flow_clear` | `()` | High-flow condition resolved |
 
 **Exceptions:**
 
@@ -683,6 +690,7 @@ class SystemStatus:
     amplitude: int          # Current amplitude (80-250)
     frequency: int          # Current frequency (25-300 Hz)
     current_flow: float     # Flow reading (ul/min)
+    current_pressure: float # Pressure reading (mbar)
     pid_target: float       # PID target (0.0 in MANUAL)
     pid_elapsed_s: int      # PID elapsed seconds
     pid_duration_s: int     # PID total duration (0=infinite)
@@ -690,6 +698,8 @@ class SystemStatus:
     sensor_available: bool  # Flow sensor detected
     pressure_available: bool # Pressure sensor detected
     current_temperature: float # Temperature (C)
+    air_in_line: bool       # Air-in-line flag active
+    high_flow: bool         # High-flow flag active
 ```
 
 ---
@@ -709,7 +719,7 @@ class SystemStatus:
 | PUMP ON fails: `ERR PID_ACTIVE` | PID mode is running | Stop PID first (STOP PID button), then use manual controls. |
 | PUMP ON fails: `ERR PUMP_UNAVAIL` | DAC not detected at 0x61 | Check I2C wiring. Run I2C Scan. Wait for hot-plug detection. |
 | PID START fails: hardware unavailable | Pump or sensor not detected | Both pump (0x61) and sensor (0x08) must be detected for PID. Check wiring. |
-| PID not converging | Gains too aggressive or too conservative | Start with defaults (Kp=1.0, Ki=0.1, Kd=0.01). Adjust incrementally. |
+| PID not converging | Gains too aggressive or too conservative | Start with defaults (Kp=0.8, Ki=3.0, Kd=0.0). Adjust incrementally. |
 | `FLOW_ERR` alert during PID | Flow >20% off target for >10s | Check for air bubbles, blockages, or unreachable targets. |
 | `AIR_IN_LINE` alert | Air bubble in flow path | Re-prime the system at max amplitude (250) and frequency (300 Hz). |
 | `HIGH_FLOW` alert | Flow exceeds sensor range | Reduce pump amplitude and/or frequency. |
@@ -729,11 +739,13 @@ For developers who want to modify the GUI:
 ```
 main_gui.py
 ├── SignalBridge (QObject)          # Thread-safe callback -> Qt signal bridge
-│   ├── data_received(float, float) # flow, temperature
+│   ├── data_received(float, float, float)  # flow, temperature, pressure
 │   ├── pid_done()
 │   ├── flow_err(float, float)      # target, actual
 │   ├── air_in_line()
 │   ├── high_flow()
+│   ├── air_clear()
+│   ├── high_flow_clear()
 │   ├── log_message(str)
 │   └── connection_lost()
 │
@@ -760,6 +772,42 @@ main_gui.py
 | `_chart_timer` | 100 ms | Refresh pyqtgraph charts |
 | `_status_timer` | 1000 ms | Poll STATUS for mode/pump/elapsed updates |
 | `_conn_check_timer` | 2000 ms | Detect unexpected serial disconnection |
-| `_hw_scan_timer` | 5000 ms | Re-scan I2C bus for hot-plug detection |
+| `_hw_scan_timer` | N/A (no longer active) | Hardware availability is now detected via STATUS polling (1s) |
 | `_amp_debounce` | 150 ms (single-shot) | Debounce amplitude slider changes |
 | `_freq_debounce` | 150 ms (single-shot) | Debounce frequency slider changes |
+
+---
+
+## 13. Tube Calibration
+
+The GUI includes a tube calibration feature that determines the usable flow range for the connected tubing. This runs entirely from the host PC using existing firmware commands.
+
+### How to Calibrate
+
+1. Ensure the system is connected and primed (liquid flowing, no air bubbles).
+2. In the left panel, find the **Tube Calibration** group.
+3. Click **Calibrate Tube**.
+4. The calibration runs three phases automatically:
+   - **Priming** (0-40%): Gradually increases amplitude from 80 to 250, backs off if HIGH_FLOW detected.
+   - **Stability** (40-55%): Waits for flow to stabilize within ±7 ul/min over 3 seconds.
+   - **Range Detection** (55-95%): Measures flow at AMP=250 (max) and AMP=80 (min).
+5. On completion, the detected flow range is displayed and the PID target slider is automatically configured with the valid range.
+6. Click **Cancel** at any time to abort.
+
+### Tube Parameters
+
+The **Tube Parameters** group allows entering tube diameter (um), length (cm), and fluid viscosity (mPa·s). These are used to compute live values displayed during operation:
+- **V_avg**: Average flow velocity (mm/s)
+- **Shear rate**: Wall shear rate (1/s)
+- **ΔP**: Estimated pressure drop (mbar) using Hagen-Poiseuille equation
+
+---
+
+## 14. Fluent Theme
+
+The GUI uses a custom Fluent/macOS-soft visual theme defined in `fluent_theme.py`. Features:
+- Card-based group boxes with rounded corners
+- Segoe UI typography
+- Dark chart backgrounds with light text
+- Accent color: #0078D4 (Windows blue)
+- The theme is applied automatically on startup via `init_fluent_theme()`.

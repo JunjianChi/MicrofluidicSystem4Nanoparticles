@@ -1,6 +1,6 @@
 # Microfluidic Control System
 
-> **Firmware V3.0.0** | **Host PC GUI V1.0.0** | ESP32 + FreeRTOS | Python PyQt5
+> **Firmware V3.1.0** | **Host PC GUI V1.0.0** | ESP32 + FreeRTOS | Python PyQt5
 
 An ESP32-based closed-loop microfluidic control system that mimics blood circulation for organ-on-chip and lab-on-chip applications. The system drives a Bartels MP6 piezoelectric micropump, measures real-time liquid flow with a Sensirion SLF3S sensor, and closes the loop with a PID controller -- all at 10 Hz. A Python GUI on the host PC provides manual pump control, PID mode, live charting, data recording with CSV export, and hardware hot-plug detection.
 
@@ -17,10 +17,10 @@ An ESP32-based closed-loop microfluidic control system that mimics blood circula
                                                    │   │            │
                                              ┌─────┘   │   ┌───────┘
                                              ▼         ▼   ▼
-                                          ┌────────┐ ┌──────────┐
-                                          │MCP4726 │ │  SLF3S   │
-                                          │DAC 0x61│ │Flow 0x08 │
-                                          └────────┘ └──────────┘
+                                          ┌────────┐ ┌──────────┐ ┌──────────┐
+                                          │MCP4726 │ │  SLF3S   │ │ABP Press │
+                                          │DAC 0x61│ │Flow 0x08 │ │  0x78    │
+                                          └────────┘ └──────────┘ └──────────┘
                                             MP6 Pump
                                          (Enable+Clock)
 ```
@@ -238,6 +238,7 @@ SensorCDT_Microfluidic_Project/
 │       ├── mp6_driver.c/.h            # MP6 micropump driver (amplitude, frequency, enable)
 │       ├── mcp4726_dac.c/.h           # MCP4726 DAC I2C driver (voltage output)
 │       ├── MCP4726_DAC.md             # DAC component documentation
+│       ├── abp_pressure_sensor.c/.h     # Honeywell ABP pressure sensor I2C driver
 │       ├── SLF3S_flow_sensor.c/.h     # SLF3S flow sensor I2C driver
 │       ├── pid_controller.c/.h        # PID controller (anti-windup, deviation detect)
 │       ├── i2c_interface.c/.h         # I2C bus abstraction (init, probe, scan)
@@ -248,7 +249,9 @@ SensorCDT_Microfluidic_Project/
     ├── README.md                      # GUI user guide (see HostPC/README.md)
     ├── requirements.txt               # Python dependencies (PyQt5, pyqtgraph, pyserial)
     ├── microfluidic_api.py            # Serial API wrapper (MicrofluidicController class)
-    └── main_gui.py                    # PyQt5 GUI application
+    ├── main_gui.py                    # PyQt5 GUI application
+    ├── tube_calibration.py       # Tube calibration & flow range detection
+    └── fluent_theme.py           # Fluent/macOS-soft GUI theme
 ```
 
 ---
@@ -274,9 +277,9 @@ SensorCDT_Microfluidic_Project/
                      ┌─────────┬───────────┐       │
                      │         │           │       │
                 ┌────┴────┐ ┌──┴───┐  ┌────┴──────┴──┐
-                │ SLF3S   │ │0x76  │  │   MCP4726     │
-                │ Flow    │ │Press.│  │   DAC (0x61)  │
-                │ (0x08)  │ │(TBD) │  │   Vout ───────┘
+                │ SLF3S   │ │0x78  │  │   MCP4726     │
+                │ Flow    │ │ABP   │  │   DAC (0x61)  │
+                │ (0x08)  │ │Press.│  │   Vout ───────┘
                 └─────────┘ └──────┘  └───────────────┘
 
     NOTE: 4.7k pull-up resistors required on SDA and SCL lines.
@@ -399,7 +402,7 @@ Dependencies: `PyQt5>=5.15`, `pyqtgraph>=0.13`, `pyserial>=3.5`
 5. Check the **Status Bar** for hardware detection:
    - **Driver: OK** -- MCP4726 DAC (0x61) detected (pump driver available)
    - **Flow Sensor: OK** -- SLF3S (0x08) detected
-   - **Pressure: OK/N/A** -- Pressure sensor (0x76) status
+   - **Pressure: OK/N/A** -- Honeywell ABP pressure sensor (0x78) status
 6. If a device shows **N/A**, check wiring. The GUI re-scans every 5 seconds and will auto-detect when you plug in a device.
 
 ### Step 5: Priming and Bubble Removal (CRITICAL)
@@ -505,7 +508,7 @@ The ESP32 firmware communicates via UART0 at **115200 baud, 8N1, ASCII, newline-
 | PID stop | `PID STOP` | `OK` | Returns to MANUAL |
 | PID target | `PID TARGET <value>` | `OK` | Update while running |
 | PID tune | `PID TUNE <Kp> <Ki> <Kd>` | `OK` | Set gains |
-| Status | `STATUS` | `S <fields...>` | 12-field status line |
+| Status | `STATUS` | `S <fields...>` | 15-field status line |
 | I2C scan | `SCAN` | `SCAN [addr...]` | Hex addresses |
 | Stream ON/OFF | `STREAM ON` / `STREAM OFF` | `OK` | 10 Hz data toggle |
 | Calibration | `CAL <WATER\|IPA>` | `OK` | Switch calibration liquid |
@@ -514,11 +517,13 @@ The ESP32 firmware communicates via UART0 at **115200 baud, 8N1, ASCII, newline-
 
 | Message | Format | Trigger |
 |---------|--------|---------|
-| Data stream | `D <flow> <temperature>` | 10 Hz when stream is ON |
+| Data stream | `D <flow> <temperature> <pressure>` | 10 Hz when stream is ON |
 | PID done | `EVENT PID_DONE` | PID duration expired |
 | Flow error | `EVENT FLOW_ERR <target> <actual>` | Sustained flow deviation (>20% for >10s) |
 | Air in line | `EVENT AIR_IN_LINE` | Air bubble detected (edge-triggered) |
 | High flow | `EVENT HIGH_FLOW` | Flow exceeds sensor range (edge-triggered) |
+| Air clear | `EVENT AIR_CLEAR` | Air-in-line condition cleared (edge-triggered) |
+| High flow clear | `EVENT HIGH_FLOW_CLEAR` | High-flow condition cleared (edge-triggered) |
 
 For the full protocol specification (STATUS field details, error codes, etc.), see [API.md](API.md).
 
@@ -553,7 +558,7 @@ For the full protocol specification (STATUS field details, error codes, etc.), s
 | Task | Priority | Role |
 |------|----------|------|
 | `serial_cmd_task` | 5 | Blocks on UART, parses commands, dispatches to handlers |
-| `sensor_read_task` | 6 (higher) | 10 Hz sensor sampling, PID compute, data stream, hot-plug re-probe (5s) |
+| `sensor_read_task` | 6 (higher) | 10 Hz sensor sampling, PID compute, data stream, hot-plug re-probe (2s) |
 
 Sensor task has higher priority to guarantee consistent 10 Hz sampling even when serial commands are processing. Both tasks share `g_state` via a FreeRTOS mutex. See `main.c` header comments for full RTOS architecture details.
 
@@ -616,7 +621,7 @@ Per the [SLF3S Datasheet](https://sensirion.com/media/documents/C4F8D965/66F56F5
 ### Electrical Safety
 
 - **4.7k pull-up resistors** on I2C SDA and SCL lines (to 3.3V). Without pull-ups, I2C communication will be unreliable. The I2C bus runs at 100 kHz.
-- **Verify I2C addresses** with the SCAN command before running experiments. Expected: 0x08 (SLF3S), 0x61 (MCP4726).
+- **Verify I2C addresses** with the SCAN command before running experiments. Expected: 0x08 (SLF3S), 0x61 (MCP4726), 0x78 (ABP pressure).
 - **Check DAC reference voltage.** The MCP4726 VDD is calibrated at 4.734V in firmware (`MCP4726_VDD` in `mcp4726_dac.h`). If your power supply differs, update this constant for correct amplitude mapping.
 - **SLF3S sensor requires 3.3V supply** -- separate from the 5V DAC/driver supply. Do not connect the sensor to 5V.
 
@@ -663,12 +668,14 @@ Per the [SLF3S Datasheet](https://sensirion.com/media/documents/C4F8D965/66F56F5
 - [x] Serial protocol (ASCII, 12 commands + 5 async events)
 - [x] FreeRTOS dual-task architecture (serial_cmd_task + sensor_read_task)
 - [x] Kconfig configuration system
-- [x] Hardware hot-plug detection (firmware 5s re-probe + GUI 5s I2C scan)
+- [x] Hardware hot-plug detection (firmware 2s re-probe + GUI 5s I2C scan)
 - [x] Flow sensor calibration switching (Water / IPA)
 - [x] Sensor flag detection (AIR_IN_LINE, HIGH_FLOW, edge-triggered events)
 - [x] Host PC Python API (microfluidic_api.py, thread-safe)
 - [x] Host PC PyQt5 GUI (Manual/PID modes, real-time charts, recording, alerts, hot-plug)
-- [ ] Pressure sensor driver
+- [x] Pressure sensor driver (Honeywell ABP at 0x78)
+- [x] Tube calibration (host-side flow range detection)
+- [x] Fluent theme GUI styling
 - [ ] WiFi communication mode
 
 ---

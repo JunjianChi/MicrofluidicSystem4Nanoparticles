@@ -1,4 +1,13 @@
-# Serial Communication API V2.0.0
+# Serial Communication API V3.1.0
+
+## Changelog (V2 -> V3)
+
+- **Pressure sensor driver**: Added Honeywell ABP ABPMANV015PG7A5 pressure sensor driver (`abp_pressure_sensor.c/.h`), I2C address `0x78`.
+- **STATUS extended to 15 fields**: Added `temp`, `pressure`, `air`, and `high_flow` fields (positions 12-15) to STATUS response.
+- **Data stream now 3 fields with pressure**: Data stream format changed from `D <flow>` to `D <flow> <temperature> <pressure>`.
+- **Hot-plug interval changed to 2s**: Firmware and GUI hot-plug re-probe interval reduced from 5 seconds to 2 seconds.
+- **New AIR_CLEAR/HIGH_FLOW_CLEAR events**: Added edge-triggered falling-edge events for air-in-line and high-flow condition resolution.
+- **Tube calibration on host side**: Added `tube_calibration.py` for host-side tube calibration support.
 
 ## Changelog (V1 -> V2)
 
@@ -7,12 +16,12 @@
 - **New error codes**: `PUMP_UNAVAIL` and `SENSOR_UNAVAIL` — commands are rejected if required hardware is not detected.
 - **Hot-plug support (firmware)**: `sensor_read_task` re-probes I2C bus every 5 seconds for unavailable devices. Newly connected sensors are auto-initialized.
 - **Hot-plug support (GUI)**: GUI re-scans I2C every 5 seconds to detect device connect/disconnect, updates UI controls and status labels in real-time.
-- **Pressure sensor detection**: Added pressure sensor (default I2C 0x76) to hardware detection and STATUS reporting.
+- **Pressure sensor detection**: Added pressure sensor (default I2C 0x78) to hardware detection and STATUS reporting.
 - **PUMP ON fix**: GUI now sends `AMP` + `FREQ` before `PUMP ON` to ensure pump starts with correct parameters.
 - **Live slider updates**: Amplitude and frequency sliders update the firmware in real-time (150ms debounce) while pump is running.
 - **Tabbed sensor charts**: GUI has separate tabs for Flow Rate and Pressure, with auto-scaling Y axis.
 - **Response filtering**: Host-side dispatch only accepts lines starting with `OK`, `ERR`, `S `, `SCAN` as command responses. ESP-IDF boot log and garbage lines are ignored.
-- **I2C SCAN-based detection**: GUI detects hardware by I2C address from SCAN results (0x61=pump, 0x08=flow sensor, 0x76=pressure), independent per device.
+- **I2C SCAN-based detection**: GUI detects hardware by I2C address from SCAN results (0x61=pump, 0x08=flow sensor, 0x78=pressure), independent per device.
 
 ## System Architecture
 
@@ -26,13 +35,13 @@
 |    MicrofluidicController    |   << OK                      |       +-> mp6_driver          |
 |    +- pump_on/off()          |   >> STATUS                  |       |    +- amplitude (DAC)  |
 |    +- set_amplitude/freq()   |   << S MANUAL 1 200 100 ... |       |    +- frequency (LEDC) |
-|    +- pid_start/stop/tune()  |   << D 12.50                |       |    +- enable (GPIO)    |
+|    +- pid_start/stop/tune()  |   << D 12.50 23.10 0.0345   |       |    +- enable (GPIO)    |
 |    +- stream_on/off()        |   << EVENT PID_DONE         |       +-> SLF3S_sensor         |
 |    +- get_status()           |                              |       |    +- flow_read()      |
 |    +- scan_i2c()             |                              |       +-> pid_controller       |
 |                              |                              |            +- setpoint         |
 |  Callbacks:                  |                              |            +- compute()        |
-|    on_data(flow)             |                              |                              |
+|    on_data(flow, temp, pres) |                              |                              |
 |    on_pid_done()             |                              |  sensor_read_task (10Hz)      |
 |    on_flow_err(tgt, act)     |                              |    +-> serial_comm_send_data()|
 +------------------------------+                              +------------------------------+
@@ -72,7 +81,7 @@ Two mutually exclusive modes:
 |--------|---------|-------------|
 | MCP4726 DAC | `0x61` | Pump driver amplitude control |
 | SLF3S Flow Sensor | `0x08` | Liquid flow measurement |
-| Pressure Sensor | `0x76` | Pressure measurement (default, detection only) |
+| Pressure Sensor | `0x78` | Honeywell ABP ABPMANV015PG7A5 pressure measurement |
 
 ## PC -> ESP32 Commands
 
@@ -98,7 +107,7 @@ Two mutually exclusive modes:
 
 | Command | Format | Response | Notes |
 |---------|--------|----------|-------|
-| Stream ON | `STREAM ON\n` | `OK\n` | Enable 10Hz flow data reporting (`D <flow>`) |
+| Stream ON | `STREAM ON\n` | `OK\n` | Enable 10Hz flow data reporting (`D <flow> <temperature> <pressure>`) |
 | Stream OFF | `STREAM OFF\n` | `OK\n` | Disable flow data reporting |
 
 ### Sensor Calibration
@@ -124,7 +133,7 @@ Each command returns exactly one response line:
 |------|--------|---------|
 | Success | `OK\n` | `OK\n` |
 | Error | `ERR <reason>\n` | `ERR INVALID_ARG\n`, `ERR PID_ACTIVE\n` |
-| Status | `S <fields...>\n` | `S MANUAL 1 200 100 12.50 0.00 0 0 1 1 0\n` |
+| Status | `S <fields...>\n` | `S MANUAL 1 200 100 12.50 0.00 0 0 1 1 0 23.10 0.0345 0 0\n` |
 | I2C scan | `SCAN [<addr> ...]\n` | `SCAN 08 61\n` or `SCAN\n` (no devices) |
 
 ### Error Codes
@@ -138,9 +147,9 @@ Each command returns exactly one response line:
 | `PUMP_UNAVAIL` | Pump hardware (MCP4726 DAC at 0x61) not detected |
 | `SENSOR_UNAVAIL` | Flow sensor (SLF3S at 0x08) not detected |
 
-### STATUS Response Fields (V2)
+### STATUS Response Fields (V2/V3)
 
-`S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw>`
+`S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw> <temp> <pressure> <air> <high_flow>`
 
 | Field | Position | Type | Description |
 |-------|----------|------|-------------|
@@ -156,8 +165,12 @@ Each command returns exactly one response line:
 | pump_hw | 9 | 0/1 | Pump driver available (1=detected, 0=not found) |
 | sensor_hw | 10 | 0/1 | Flow sensor available (1=detected, 0=not found) |
 | pressure_hw | 11 | 0/1 | Pressure sensor available (1=detected, 0=not found) |
+| temp | 12 | float | Sensor temperature (°C) |
+| pressure | 13 | float | Pressure reading (bar) |
+| air | 14 | 0/1 | Air-in-line flag (1=detected) |
+| high_flow | 15 | 0/1 | High-flow flag (1=detected) |
 
-**Note:** Fields 9-11 are new in V2. The host-side parser is backward-compatible (defaults to 1/1/0 if fields are missing).
+**Note:** Fields 9-15 are new in V2/V3. The host-side parser is backward-compatible (defaults to 1/1/0 if fields are missing).
 
 ### SCAN Response
 
@@ -165,17 +178,19 @@ Each command returns exactly one response line:
 
 - Addresses are two-digit uppercase hex, space-separated
 - Empty result: just `SCAN` with no addresses
-- Example: `SCAN 08 61 76` -> devices at 0x08, 0x61, 0x76
+- Example: `SCAN 08 61 78` -> devices at 0x08, 0x61, 0x78
 
 ### Async Messages (ESP32 -> PC, unsolicited)
 
 | Type | Format | Trigger |
 |------|--------|---------|
-| Data stream | `D <flow>\n` | After `STREAM ON`, at 10Hz |
+| Data stream | `D <flow> <temperature> <pressure>\n` | After `STREAM ON`, at 10Hz |
 | PID done | `EVENT PID_DONE\n` | PID duration expired, auto-stops |
 | Flow error | `EVENT FLOW_ERR <target> <actual>\n` | Sustained flow deviation from target |
 | Air in line | `EVENT AIR_IN_LINE\n` | Air bubble detected (edge-triggered, rising edge) |
 | High flow | `EVENT HIGH_FLOW\n` | Flow rate exceeds sensor range (edge-triggered, rising edge) |
+| Air clear | `EVENT AIR_CLEAR\n` | Air-in-line condition resolved (edge-triggered, falling edge) |
+| High flow clear | `EVENT HIGH_FLOW_CLEAR\n` | High-flow condition resolved (edge-triggered, falling edge) |
 
 ## Message Classification (Host-side Dispatch)
 
@@ -184,10 +199,12 @@ The host listener thread classifies each incoming line:
 ```
 Incoming line
   +-- matches ESP-IDF log regex [EWIDV] (\d+) ... -> discard (boot/debug log)
-  +-- starts with "D "                            -> data stream, on_data(flow) callback
+  +-- starts with "D "                            -> data stream, on_data(flow, temperature, pressure) callback
   +-- == "EVENT PID_DONE"                         -> PID done event, on_pid_done() callback
   +-- == "EVENT AIR_IN_LINE"                      -> air bubble event, on_air_in_line() callback
   +-- == "EVENT HIGH_FLOW"                        -> high flow event, on_high_flow() callback
+  +-- == "EVENT AIR_CLEAR"                        -> air clear event, on_air_clear() callback
+  +-- == "EVENT HIGH_FLOW_CLEAR"                  -> high flow clear event, on_high_flow_clear() callback
   +-- starts with "EVENT FLOW_ERR"                -> flow error event, on_flow_err(tgt, act)
   +-- starts with "OK" / "ERR" / "S " / "SCAN"   -> command response (wakes waiting caller)
   +-- anything else                               -> discard (boot garbage, stale output)
@@ -207,7 +224,7 @@ app_main()
   |     +-- i2c_interface_scan()      # Enumerate bus
   |     +-- probe 0x61 -> mp6_init()           -> pump_available = true/false
   |     +-- probe 0x08 -> slf3s_init/start()   -> sensor_available = true/false
-  |     +-- probe 0x76                         -> pressure_available = true/false
+  |     +-- probe 0x78 -> abp_init()            -> pressure_available = true/false
   |     +-- return ESP_OK             # Always OK (individual failures logged)
   |
   +-- xTaskCreate(serial_cmd_task)    # Always created
@@ -220,27 +237,27 @@ app_main()
 
 ### Firmware Side (sensor_read_task)
 
-Every 5 seconds, the sensor_read_task re-probes I2C addresses for unavailable devices:
+Every 2 seconds, the sensor_read_task re-probes I2C addresses for unavailable devices:
 
 ```
-Every 5s in sensor_read_task loop:
+Every 2s in sensor_read_task loop:
   if !pump_available:
     probe 0x61 -> mp6_init() -> set pump_available = true
   if !sensor_available:
     probe 0x08 -> slf3s_init() + slf3s_start_measurement() -> set sensor_available = true
   if !pressure_available:
-    probe 0x76 -> set pressure_available = true
+    probe 0x78 -> abp_init() -> set pressure_available = true
 ```
 
 Once a device is detected and initialized, its `*_available` flag is set. This flag is included in subsequent STATUS responses.
 
 ### GUI Side (periodic I2C SCAN)
 
-Every 5 seconds, the GUI sends a `SCAN` command and checks addresses:
+Every 2 seconds, the GUI sends a `SCAN` command and checks addresses:
 
 - `0x61` present -> pump available
 - `0x08` present -> flow sensor available
-- `0x76` present -> pressure sensor available
+- `0x78` present -> pressure sensor available
 
 On change: UI labels update, controls enable/disable, log messages emitted.
 
@@ -288,8 +305,8 @@ PC sends PID START 15.00 600
 ```python
 from microfluidic_api import MicrofluidicController
 
-def on_data(flow):
-    print(f"Flow: {flow:.2f} ul/min")
+def on_data(flow, temperature, pressure):
+    print(f"Flow: {flow:.2f} ul/min, Temp: {temperature:.2f} °C, Pressure: {pressure:.4f} bar")
 
 def on_pid_done():
     print("[EVENT] PID_DONE")
@@ -343,6 +360,8 @@ python main_gui.py
 HostPC/
 +-- microfluidic_api.py    # Serial communication API (MicrofluidicController)
 +-- main_gui.py            # PyQt5 GUI main window
++-- tube_calibration.py    # Tube calibration utilities
++-- fluent_theme.py        # Fluent UI theme for GUI
 +-- requirements.txt       # Python dependencies (PyQt5, pyqtgraph, pyserial)
 
 Firmware/main/
@@ -351,6 +370,7 @@ Firmware/main/
 +-- mcp4726_dac.h/.c       # DAC driver (I2C, amplitude -> voltage)
 +-- SLF3S_flow_sensor.h/.c # Flow sensor driver (I2C, 10Hz read)
 +-- pid_controller.h/.c    # PID closed-loop controller
++-- abp_pressure_sensor.h/.c # ABP pressure sensor driver (I2C)
 +-- sensor_config.h        # I2C addresses, pin config, sampling rates
 +-- i2c_interface.h/.c     # I2C bus driver (init, probe, scan)
 +-- main.h                 # System state struct, command handler declarations
@@ -366,11 +386,13 @@ Firmware/main/
 | `serial_comm_send(fmt, ...)` | Formatted send |
 | `serial_comm_send_ok()` | Send `OK\n` |
 | `serial_comm_send_err(reason)` | Send `ERR <reason>\n` |
-| `serial_comm_send_data(flow)` | Send `D <flow>\n` |
-| `serial_comm_send_status(state)` | Send `S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw>\n` |
+| `serial_comm_send_data(flow, temperature, pressure)` | Send `D <flow> <temperature> <pressure>\n` |
+| `serial_comm_send_status(state)` | Send `S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw> <temp> <pressure> <air> <high_flow>\n` |
 | `serial_comm_send_scan(devices, count)` | Send `SCAN <addr1> <addr2> ...\n` |
 | `serial_comm_send_event_pid_done()` | Send `EVENT PID_DONE\n` |
 | `serial_comm_send_event_flow_err(target, actual)` | Send `EVENT FLOW_ERR <target> <actual>\n` |
 | `serial_comm_send_event_air_in_line()` | Send `EVENT AIR_IN_LINE\n` |
 | `serial_comm_send_event_high_flow()` | Send `EVENT HIGH_FLOW\n` |
+| `serial_comm_send_event_air_clear()` | Send `EVENT AIR_CLEAR\n` |
+| `serial_comm_send_event_high_flow_clear()` | Send `EVENT HIGH_FLOW_CLEAR\n` |
 | `serial_comm_process_cmd(state, cmd_line)` | Parse and execute one command |
