@@ -1,6 +1,6 @@
 # Microfluidic Control System
 
-> **Firmware V3.1.0** | **Host PC GUI V1.0.0** | ESP32 + FreeRTOS | Python PyQt5
+> **Firmware V3.1.0** | **Host PC GUI V3.1.0** | ESP32 + FreeRTOS | Python PyQt5
 
 An ESP32-based closed-loop microfluidic control system that mimics blood circulation for organ-on-chip and lab-on-chip applications. The system drives a Bartels MP6 piezoelectric micropump, measures real-time liquid flow with a Sensirion SLF3S sensor, and closes the loop with a PID controller -- all at 10 Hz. A Python GUI on the host PC provides manual pump control, PID mode, live charting, data recording with CSV export, and hardware hot-plug detection.
 
@@ -221,7 +221,7 @@ Source: [mp-bt product page](https://darwin-microfluidics.com/products/mp-bt-bub
 ## 3. Project Structure
 
 ```
-SensorCDT_Microfluidic_Project/
+MicrofluidicSystem4Nanoparticles/
 ├── README.md                          # This file - system tutorial and guide
 ├── API.md                             # Serial protocol specification (English)
 │
@@ -242,8 +242,7 @@ SensorCDT_Microfluidic_Project/
 │       ├── SLF3S_flow_sensor.c/.h     # SLF3S flow sensor I2C driver
 │       ├── pid_controller.c/.h        # PID controller (anti-windup, deviation detect)
 │       ├── i2c_interface.c/.h         # I2C bus abstraction (init, probe, scan)
-│       ├── sensor_config.c/.h         # Pin assignments, I2C addresses, sampling rates
-│       └── sensor_config.h            # Compile-time config from Kconfig
+│       └── sensor_config.c/.h         # Pin assignments, I2C addresses, sampling rates
 │
 └── HostPC/                            # Host PC software (Python)
     ├── README.md                      # GUI user guide (see HostPC/README.md)
@@ -379,7 +378,7 @@ The firmware will:
 
 **Option A: Run from source (recommended for development)**
 
-Requires **Python 3.13+** (`python --version` to check).
+Requires **Python 3.8+** (`python --version` to check).
 
 ```bash
 cd HostPC
@@ -399,7 +398,8 @@ Dependencies: `PyQt5>=5.15`, `pyqtgraph>=0.13`, `pyserial>=3.5`
 
 ### Step 4: First Connection
 
-1. Plug the ESP32 into USB. Note the COM port (e.g., COM3 on Windows, /dev/ttyUSB0 on Linux).
+1. Plug the ESP32 into USB. Note the COM port (e.g., COM3 on Windows, /dev/cu.usbserial-xxxx on macOS, /dev/ttyUSB0 on Linux).
+   > **Linux note:** You may need to add your user to the `dialout` group: `sudo usermod -aG dialout $USER` (log out and back in to apply).
 2. Launch the GUI (`python main_gui.py`).
 3. Select the COM port from the dropdown and click **Connect**.
 4. The GUI will:
@@ -411,7 +411,7 @@ Dependencies: `PyQt5>=5.15`, `pyqtgraph>=0.13`, `pyserial>=3.5`
    - **Driver: OK** -- MCP4726 DAC (0x61) detected (pump driver available)
    - **Flow Sensor: OK** -- SLF3S (0x08) detected
    - **Pressure: OK/N/A** -- Honeywell ABP pressure sensor (0x78) status
-6. If a device shows **N/A**, check wiring. The GUI re-scans every 5 seconds and will auto-detect when you plug in a device.
+6. If a device shows **N/A**, check wiring. The GUI polls hardware status every 1 second via STATUS and will auto-detect when you plug in a device.
 
 ### Step 5: Priming and Bubble Removal (CRITICAL)
 
@@ -455,7 +455,7 @@ For precise flow control, use PID mode:
 2. Configure the PID parameters:
    - **Target**: desired flow rate in ul/min (e.g., 10.00)
    - **Duration**: experiment length in seconds (0 = run indefinitely)
-   - **PID Gains**: Kp, Ki, Kd (defaults: 1.0, 0.1, 0.01)
+   - **PID Gains**: Kp, Ki, Kd (defaults: 0.8, 3.0, 0.0)
 3. Click **START PID**. A confirmation dialog appears.
 4. Confirm to start. The firmware will:
    - Send `PID TUNE` to set gains
@@ -471,7 +471,7 @@ For precise flow control, use PID mode:
 - Output range: amplitude 80-250 (maps directly to `mp6_set_amplitude`)
 - Anti-windup: integral clamped to +/-500
 - Flow deviation alert: if flow deviates >20% from target for >10 seconds, `EVENT FLOW_ERR` is sent
-- Frequency is fixed at its current value when PID starts; PID only adjusts amplitude
+- PID only adjusts amplitude; frequency remains at its current value
 
 ---
 
@@ -519,7 +519,7 @@ The ESP32 firmware communicates via UART0 at **115200 baud, 8N1, ASCII, newline-
 | Status | `STATUS` | `S <fields...>` | 15-field status line |
 | I2C scan | `SCAN` | `SCAN [addr...]` | Hex addresses |
 | Stream ON/OFF | `STREAM ON` / `STREAM OFF` | `OK` | 10 Hz data toggle |
-| Calibration | `CAL <WATER\|IPA>` | `OK` | Switch calibration liquid |
+| Calibration | `CAL <WATER\|IPA>` | `OK` | Switch calibration liquid. Rejected during PID (`ERR PID_ACTIVE`). |
 
 ### ESP32 -> PC Async Events
 
@@ -582,7 +582,7 @@ Setpoint (ul/min) ──►(+)──► PID Controller ──► Pump Amplitude 
                               (10 Hz sampling)
 ```
 
-- PID only adjusts amplitude; frequency is fixed when PID starts
+- PID only adjusts amplitude; frequency remains at its current value when PID starts
 - Anti-windup: integral clamped to +/-500, output clamped to 80-250
 
 ### Host PC Software
@@ -635,7 +635,7 @@ Per the [SLF3S Datasheet](https://sensirion.com/media/documents/C4F8D965/66F56F5
 
 ### PID Tuning Tips
 
-- Start with conservative gains: Kp=1.0, Ki=0.1, Kd=0.01.
+- Start with conservative gains: Kp=0.8, Ki=3.0, Kd=0.0.
 - Increase Kp for faster response, but watch for oscillation.
 - Increase Ki to eliminate steady-state error, but reduce it if you see overshoot.
 - Kd helps dampen oscillation but amplifies noise -- use sparingly.
@@ -658,7 +658,7 @@ Per the [SLF3S Datasheet](https://sensirion.com/media/documents/C4F8D965/66F56F5
 | `AIR_IN_LINE` alert won't clear | Persistent air in flow path | Re-prime the system. Check for leaks in tubing connections. |
 | `ERR PID_ACTIVE` | Manual command sent during PID | Stop PID first (`PID STOP` or click STOP PID), then use manual controls. |
 | `ERR PUMP_UNAVAIL` / `ERR SENSOR_UNAVAIL` | Hardware not detected | Check I2C wiring. Hot-plug detection will auto-detect when reconnected. |
-| PID oscillates / doesn't converge | PID gains too aggressive | Reduce Kp. Reduce Ki. Start with defaults (1.0, 0.1, 0.01). |
+| PID oscillates / doesn't converge | PID gains too aggressive | Reduce Kp. Reduce Ki. Start with defaults (0.8, 3.0, 0.0). |
 | `EVENT FLOW_ERR` during PID | Flow deviates >20% for >10s | Check for bubbles, leaks, or blockages. Verify target is achievable with your setup. |
 | Chart not updating | Stream disabled / sensor unavailable | Check that STREAM ON succeeded (see log). Check sensor availability. |
 | GUI freezes on connect | ESP32 sending boot logs | Wait for boot to complete (~2s). The GUI flushes stale data on connect. |
@@ -676,7 +676,7 @@ Per the [SLF3S Datasheet](https://sensirion.com/media/documents/C4F8D965/66F56F5
 - [x] Serial protocol (ASCII, 12 commands + 5 async events)
 - [x] FreeRTOS dual-task architecture (serial_cmd_task + sensor_read_task)
 - [x] Kconfig configuration system
-- [x] Hardware hot-plug detection (firmware 2s re-probe + GUI 5s I2C scan)
+- [x] Hardware hot-plug detection (firmware 2s re-probe + GUI 1s STATUS polling)
 - [x] Flow sensor calibration switching (Water / IPA)
 - [x] Sensor flag detection (AIR_IN_LINE, HIGH_FLOW, edge-triggered events)
 - [x] Host PC Python API (microfluidic_api.py, thread-safe)

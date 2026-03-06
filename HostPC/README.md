@@ -1,6 +1,6 @@
 # Microfluidic Control System - GUI User Guide
 
-> **GUI V1.1.0** | PyQt5 + pyqtgraph | Python 3.8+
+> **GUI V3.1.0** | PyQt5 + pyqtgraph | Python 3.8+
 
 This document covers every feature of the Host PC graphical user interface for the ESP32 microfluidic control system. For system-level documentation (hardware, firmware, wiring), see the [root README](../README.md).
 
@@ -29,7 +29,7 @@ This document covers every feature of the Host PC graphical user interface for t
 
 ### Prerequisites
 
-- **Python 3.13+** (check with `python --version` or `python3 --version`)
+- **Python 3.8+** (check with `python --version` or `python3 --version`)
 - **USB-to-serial driver** for your ESP32 board:
   - **CP2102** (Silicon Labs): [download](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
   - **CH340** (WCH): [download](http://www.wch-ic.com/downloads/CH341SER_EXE.html)
@@ -278,8 +278,8 @@ The GUI has two chart tabs powered by `pyqtgraph`:
 
 | Tab | Y-Axis | Color | Data Source |
 |-----|--------|-------|-------------|
-| **Flow Rate** | Flow Rate (ul/min) | Blue (#2196F3) | `D <flow>` data stream |
-| **Pressure** | Pressure (mbar) | Orange (#FF9800) | Pressure sensor (when available). Data is converted from bar to mbar for display. |
+| **Flow Rate** | Flow Rate (ul/min) | Blue (#60CDFF) | `D <flow>` data stream |
+| **Pressure** | Pressure (mbar) | Orange (#FFB900) | Pressure sensor (when available). Data is converted from bar to mbar for display. |
 
 Both charts have auto-scaling Y-axis and show approximately 60 seconds of data (600 points at 10 Hz).
 
@@ -323,10 +323,10 @@ The chart refreshes every **100 ms** (10 Hz), matching the data stream rate.
 The exported CSV file has four columns:
 
 ```csv
-time_s,flow_ul_min,temperature_c,pressure_mbar
-0.000,12.50,23.1,3.45
-0.100,12.48,23.1,3.44
-0.200,12.55,23.1,3.46
+time_s,flow_ul_min,temperature_c,pressure_bar
+0.000,12.50,23.1,0.00345
+0.100,12.48,23.1,0.00344
+0.200,12.55,23.1,0.00346
 ...
 ```
 
@@ -335,7 +335,7 @@ time_s,flow_ul_min,temperature_c,pressure_mbar
 | `time_s` | float | Time in seconds since recording started |
 | `flow_ul_min` | float | Flow rate in ul/min |
 | `temperature_c` | float | Temperature in degrees Celsius |
-| `pressure_mbar` | float | Pressure in millibar |
+| `pressure_bar` | float | Pressure in bar |
 
 ### Default Filename
 
@@ -485,8 +485,8 @@ When you change the selection, the GUI sends `CAL WATER` or `CAL IPA`. The firmw
 │ [14:30:15.456] I2C scan: [0x08, 0x61]            │
 │ [14:30:15.789] >> STREAM ON                       │
 │ [14:30:15.812] << OK                              │
-│ [14:30:16.100] << D 12.50 23.1                    │
-│ [14:30:16.200] << D 12.48 23.1                    │
+│ [14:30:16.100] << D 12.50 23.1 0.0034              │
+│ [14:30:16.200] << D 12.48 23.1 0.0035              │
 └───────────────────────────────────────────────────┘
 ```
 
@@ -574,7 +574,7 @@ import time
 from microfluidic_api import MicrofluidicController
 
 def on_data(flow, temperature, pressure):
-    print(f"Flow: {flow:.2f} ul/min, Temp: {temperature:.1f} C, Pressure: {pressure:.2f} mbar")
+    print(f"Flow: {flow:.2f} ul/min, Temp: {temperature:.1f} C, Pressure: {pressure:.4f} bar")
 
 def on_pid_done():
     print("[EVENT] PID completed!")
@@ -632,7 +632,7 @@ with MicrofluidicController("COM3") as ctrl:
 import csv
 with open("pid_experiment.csv", "w", newline="") as f:
     writer = csv.writer(f)
-    writer.writerow(["timestamp", "flow_ul_min", "temperature_c", "pressure_mbar"])
+    writer.writerow(["timestamp", "flow_ul_min", "temperature_c", "pressure_bar"])
     writer.writerows(results)
 ```
 
@@ -716,7 +716,7 @@ class SystemStatus:
     amplitude: int          # Current amplitude (80-250)
     frequency: int          # Current frequency (25-300 Hz)
     current_flow: float     # Flow reading (ul/min)
-    current_pressure: float # Pressure reading (mbar)
+    current_pressure: float # Pressure reading (bar)
     pid_target: float       # PID target (0.0 in MANUAL)
     pid_elapsed_s: int      # PID elapsed seconds
     pid_duration_s: int     # PID total duration (0=infinite)
@@ -745,7 +745,7 @@ class SystemStatus:
 | PUMP ON fails: `ERR PID_ACTIVE` | PID mode is running | Stop PID first (STOP PID button), then use manual controls. |
 | PUMP ON fails: `ERR PUMP_UNAVAIL` | DAC not detected at 0x61 | Check I2C wiring. Run I2C Scan. Wait for hot-plug detection. |
 | PID START fails: hardware unavailable | Pump or sensor not detected | Both pump (0x61) and sensor (0x08) must be detected for PID. Check wiring. |
-| PID not converging | Gains too aggressive or too conservative | Start with defaults (Kp=0.8, Ki=3.0, Kd=0.0). Adjust incrementally. |
+| PID not converging | Gains too aggressive or too conservative | Start with defaults (Kp=0.8, Ki=3.0, Kd=0.0) and adjust incrementally. |
 | `FLOW_ERR` alert during PID | Flow >20% off target for >10s | Check for air bubbles, blockages, or unreachable targets. |
 | `AIR_IN_LINE` alert | Air bubble in flow path | Re-prime the system at max amplitude (250) and frequency (300 Hz). |
 | `HIGH_FLOW` alert | Flow exceeds sensor range | Reduce pump amplitude and/or frequency. |

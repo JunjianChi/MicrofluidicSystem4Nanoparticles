@@ -14,8 +14,8 @@
 - **Boot robustness**: UART initializes first; pump/sensor init is non-fatal. System always starts even if no I2C devices are connected.
 - **Hardware availability flags**: STATUS response extended with 3 new fields (`pump_hw`, `sensor_hw`, `pressure_hw`).
 - **New error codes**: `PUMP_UNAVAIL` and `SENSOR_UNAVAIL` — commands are rejected if required hardware is not detected.
-- **Hot-plug support (firmware)**: `sensor_read_task` re-probes I2C bus every 5 seconds for unavailable devices. Newly connected sensors are auto-initialized.
-- **Hot-plug support (GUI)**: GUI re-scans I2C every 5 seconds to detect device connect/disconnect, updates UI controls and status labels in real-time.
+- **Hot-plug support (firmware)**: `sensor_read_task` re-probes I2C bus every 2 seconds for unavailable devices. Newly connected sensors are auto-initialized.
+- **Hot-plug support (GUI)**: GUI detects hardware changes via STATUS polling every 1 second, updates UI controls and status labels in real-time.
 - **Pressure sensor detection**: Added pressure sensor (default I2C 0x78) to hardware detection and STATUS reporting.
 - **PUMP ON fix**: GUI now sends `AMP` + `FREQ` before `PUMP ON` to ensure pump starts with correct parameters.
 - **Live slider updates**: Amplitude and frequency sliders update the firmware in real-time (150ms debounce) while pump is running.
@@ -251,15 +251,15 @@ Every 2s in sensor_read_task loop:
 
 Once a device is detected and initialized, its `*_available` flag is set. This flag is included in subsequent STATUS responses.
 
-### GUI Side (periodic I2C SCAN)
+### GUI Side (STATUS polling)
 
-Every 2 seconds, the GUI sends a `SCAN` command and checks addresses:
+The GUI polls `STATUS` every 1 second. The STATUS response includes hardware availability flags (fields 9-11: `pump_hw`, `sensor_hw`, `pressure_hw`). The GUI compares these against cached values to detect changes:
 
-- `0x61` present -> pump available
-- `0x08` present -> flow sensor available
-- `0x78` present -> pressure sensor available
+- `pump_hw=1` -> pump available
+- `sensor_hw=1` -> flow sensor available
+- `pressure_hw=1` -> pressure sensor available
 
-On change: UI labels update, controls enable/disable, log messages emitted.
+On change: UI labels update, controls enable/disable, log messages emitted (e.g., `[HOT-PLUG] Flow sensor detected`).
 
 ## Hardware Control Chain
 
@@ -338,7 +338,7 @@ with MicrofluidicController("COM3") as ctrl:
     ctrl.pump_off()
 
     # PID mode
-    ctrl.pid_tune(1.0, 0.1, 0.01)
+    ctrl.pid_tune(0.8, 3.0, 0.0)
     ctrl.pid_start(target_flow=15.0, duration_s=600)
     ctrl.stream_on()
     time.sleep(600)         # on_data + on_pid_done callbacks
