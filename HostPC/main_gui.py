@@ -36,6 +36,7 @@ import serial.tools.list_ports
 
 from microfluidic_api import MicrofluidicController, CommError, TimeoutError
 from tube_calibration import TubeCalibrationManager, CalibrationResult
+from fluent_theme import init_fluent_theme, apply_chart_theme, style_plot_widget
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ class SignalBridge(QObject):
 
     Usage: controller.on_data = lambda f, t: bridge.data_received.emit(f, t)
     """
-    data_received = pyqtSignal(float, float)   # flow, temperature
+    data_received = pyqtSignal(float, float, float)   # flow, temperature, pressure
     pid_done = pyqtSignal()
     flow_err = pyqtSignal(float, float)        # target, actual
     air_in_line = pyqtSignal()                 # air bubble detected
@@ -92,7 +93,7 @@ class MainWindow(QMainWindow):
 
         # Recording state
         self._recording = False
-        self._record_buf: List[Tuple[float, float, float]] = []  # (timestamp, flow, temperature)
+        self._record_buf: List[Tuple[float, float, float, float]] = []  # (timestamp, flow, temperature, pressure)
         self._record_start: float = 0.0
 
         # Hardware availability (updated after connect)
@@ -107,6 +108,7 @@ class MainWindow(QMainWindow):
 
         # Plot pause state
         self._plot_paused = False
+        self._auto_scroll = True  # auto-follow latest data; disabled on manual zoom/pan
 
         # Tube calibration state
         self._cal_manager: Optional[TubeCalibrationManager] = None
@@ -142,7 +144,7 @@ class MainWindow(QMainWindow):
         self._conn_check_timer = QTimer(self)
         self._conn_check_timer.timeout.connect(self._check_connection)
 
-        # Hardware hot-plug re-scan timer (5s)
+        # Hardware hot-plug re-scan timer (2s)
         self._hw_scan_timer = QTimer(self)
         self._hw_scan_timer.timeout.connect(self._periodic_hw_scan)
 
@@ -264,10 +266,10 @@ class MainWindow(QMainWindow):
         # Live computed values (updated on each flow reading)
         self.lbl_v_avg = QLabel("V_avg: -- mm/s")
         self.lbl_shear_rate = QLabel("Shear rate: -- 1/s")
-        self.lbl_shear_stress = QLabel("Shear stress: -- mPa")
+        self.lbl_pressure_drop = QLabel("ΔP: -- mbar")
         form.addRow(self.lbl_v_avg)
         form.addRow(self.lbl_shear_rate)
-        form.addRow(self.lbl_shear_stress)
+        form.addRow(self.lbl_pressure_drop)
 
         return grp
 
@@ -317,10 +319,10 @@ class MainWindow(QMainWindow):
         freq_layout.addWidget(QLabel("Frequency:"))
         self.slider_freq = QSlider(Qt.Horizontal)
         self.slider_freq.setRange(25, 300)
-        self.slider_freq.setValue(100)
+        self.slider_freq.setValue(200)
         self.spin_freq = QSpinBox()
         self.spin_freq.setRange(25, 300)
-        self.spin_freq.setValue(100)
+        self.spin_freq.setValue(200)
         freq_layout.addWidget(self.slider_freq, stretch=1)
         freq_layout.addWidget(self.spin_freq)
         layout.addLayout(freq_layout)
@@ -397,15 +399,15 @@ class MainWindow(QMainWindow):
         self.spin_kp = QDoubleSpinBox()
         self.spin_kp.setRange(0, 9999)
         self.spin_kp.setDecimals(4)
-        self.spin_kp.setValue(1.0)
+        self.spin_kp.setValue(0.8)
         self.spin_ki = QDoubleSpinBox()
         self.spin_ki.setRange(0, 9999)
         self.spin_ki.setDecimals(4)
-        self.spin_ki.setValue(0.1)
+        self.spin_ki.setValue(3.0)
         self.spin_kd = QDoubleSpinBox()
         self.spin_kd.setRange(0, 9999)
         self.spin_kd.setDecimals(4)
-        self.spin_kd.setValue(0.01)
+        self.spin_kd.setValue(0.0)
 
         gains_layout.addWidget(QLabel("Kp"))
         gains_layout.addWidget(self.spin_kp)
@@ -511,9 +513,15 @@ class MainWindow(QMainWindow):
         self.btn_plot_pause = QPushButton("Pause Plot")
         self.btn_plot_pause.setCheckable(True)
         self.btn_plot_pause.setStyleSheet("padding: 4px 12px;")
+        self.btn_auto_scroll = QPushButton("Auto")
+        self.btn_auto_scroll.setStyleSheet(
+            "padding: 4px 12px; background: #107C10; color: white; font-weight: bold;"
+        )
+        self.btn_auto_scroll.setToolTip("Auto-follow latest data (re-enable after zoom/pan)")
         toolbar.addStretch()
         toolbar.addWidget(self.btn_plot_clear)
         toolbar.addWidget(self.btn_plot_pause)
+        toolbar.addWidget(self.btn_auto_scroll)
         layout.addLayout(toolbar)
 
         pg.setConfigOptions(antialias=True)
@@ -523,34 +531,34 @@ class MainWindow(QMainWindow):
 
         # --- Flow Rate chart ---
         self.flow_plot = pg.PlotWidget()
-        self.flow_plot.setLabel("left", "Flow Rate (ul/min)")
-        self.flow_plot.setLabel("bottom", "Time (s)")
+        style_plot_widget(self.flow_plot)
+        self.flow_plot.setLabel("left", "Flow Rate", units="ul/min", color="white")
+        self.flow_plot.setLabel("bottom", "Time", units="s", color="white")
         self.flow_plot.getAxis("left").enableAutoSIPrefix(False)
         self.flow_plot.getAxis("bottom").enableAutoSIPrefix(False)
-        self.flow_plot.showGrid(x=True, y=True, alpha=0.3)
         self.flow_plot.enableAutoRange(axis='y')
 
         self.flow_curve = self.flow_plot.plot(
-            pen=pg.mkPen(color="#2196F3", width=2), name="Flow"
+            pen=pg.mkPen(color="#60CDFF", width=2), name="Flow"
         )
         self.target_line = pg.InfiniteLine(
-            angle=0, pen=pg.mkPen(color="#f44336", width=1, style=Qt.DashLine),
-            label="Target", labelOpts={"color": "#f44336", "position": 0.95}
+            angle=0, pen=pg.mkPen(color="#FF6B6B", width=1, style=Qt.DashLine),
+            label="Target", labelOpts={"color": "#FF6B6B", "position": 0.95}
         )
         self.target_line.setVisible(False)
         self.flow_plot.addItem(self.target_line)
 
         # --- Pressure chart ---
         self.pressure_plot = pg.PlotWidget()
-        self.pressure_plot.setLabel("left", "Pressure (mbar)")
-        self.pressure_plot.setLabel("bottom", "Time (s)")
+        style_plot_widget(self.pressure_plot)
+        self.pressure_plot.setLabel("left", "Pressure", units="mbar", color="white")
+        self.pressure_plot.setLabel("bottom", "Time", units="s", color="white")
         self.pressure_plot.getAxis("left").enableAutoSIPrefix(False)
         self.pressure_plot.getAxis("bottom").enableAutoSIPrefix(False)
-        self.pressure_plot.showGrid(x=True, y=True, alpha=0.3)
         self.pressure_plot.enableAutoRange(axis='y')
 
         self.pressure_curve = self.pressure_plot.plot(
-            pen=pg.mkPen(color="#FF9800", width=2), name="Pressure"
+            pen=pg.mkPen(color="#FFB900", width=2), name="Pressure"
         )
 
         self.chart_tabs.addTab(self.flow_plot, "Flow Rate")
@@ -568,6 +576,7 @@ class MainWindow(QMainWindow):
         self.lbl_pump_status = QLabel("Pump: --")
         self.lbl_flow_reading = QLabel("Flow: -- ul/min")
         self.lbl_temp_reading = QLabel("Temp: -- C")
+        self.lbl_pressure_reading = QLabel("Pres: -- mbar")
         self.lbl_pump_hw = QLabel("Driver: --")
         self.lbl_sensor_hw = QLabel("Flow Sensor: --")
         self.lbl_pressure_hw = QLabel("Pressure: --")
@@ -578,6 +587,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.lbl_flow_reading)
         layout.addWidget(QLabel(" | "))
         layout.addWidget(self.lbl_temp_reading)
+        layout.addWidget(QLabel(" | "))
+        layout.addWidget(self.lbl_pressure_reading)
         layout.addWidget(QLabel(" | "))
         layout.addWidget(self.lbl_pump_hw)
         layout.addWidget(QLabel(" | "))
@@ -663,9 +674,12 @@ class MainWindow(QMainWindow):
         self.btn_status.clicked.connect(self._cmd_status)
         self.combo_calibration.currentIndexChanged.connect(self._cmd_set_calibration)
 
-        # Plot pause/resume
+        # Plot pause/resume/auto-scroll
         self.btn_plot_pause.toggled.connect(self._on_plot_pause_toggled)
         self.btn_plot_clear.clicked.connect(self._on_plot_clear)
+        self.btn_auto_scroll.clicked.connect(self._on_auto_scroll_clicked)
+        self.flow_plot.sigRangeChangedManually.connect(self._on_chart_manual_zoom)
+        self.pressure_plot.sigRangeChangedManually.connect(self._on_chart_manual_zoom)
 
         # Alerts
         self.btn_dismiss_alert.clicked.connect(self._dismiss_alert)
@@ -743,7 +757,7 @@ class MainWindow(QMainWindow):
         self._ctrl = ctrl
 
         # Install callbacks that emit Qt signals
-        self._ctrl.on_data = lambda flow, temp: self._bridge.data_received.emit(flow, temp)
+        self._ctrl.on_data = lambda flow, temp, pres: self._bridge.data_received.emit(flow, temp, pres)
         self._ctrl.on_pid_done = lambda: self._bridge.pid_done.emit()
         self._ctrl.on_flow_err = lambda t, a: self._bridge.flow_err.emit(t, a)
         self._ctrl.on_air_in_line = lambda: self._bridge.air_in_line.emit()
@@ -775,7 +789,7 @@ class MainWindow(QMainWindow):
         self._set_controls_enabled(True)
         self._status_timer.start(1000)
         self._conn_check_timer.start(2000)
-        self._hw_scan_timer.start(5000)
+        # hw_scan no longer periodic — STATUS polling handles availability
 
         # Reset chart time reference
         self._t0 = time.monotonic()
@@ -794,7 +808,7 @@ class MainWindow(QMainWindow):
         # --- Step 4: detect hardware via I2C SCAN (independent per device) ---
         MCP4726_ADDR = 0x61   # MP6 pump driver DAC
         SLF3S_ADDR = 0x08     # Flow sensor
-        PRESSURE_ADDR = 0x76  # Pressure sensor (default)
+        PRESSURE_ADDR = 0x78  # Pressure sensor (default)
         try:
             devices = self._ctrl.scan_i2c()
             self._pump_available = MCP4726_ADDR in devices
@@ -1012,7 +1026,7 @@ class MainWindow(QMainWindow):
 
         MCP4726_ADDR = 0x61
         SLF3S_ADDR = 0x08
-        PRESSURE_ADDR = 0x76
+        PRESSURE_ADDR = 0x78
 
         pump_now = MCP4726_ADDR in devices
         sensor_now = SLF3S_ADDR in devices
@@ -1036,6 +1050,36 @@ class MainWindow(QMainWindow):
                 self._append_log("[HOT-PLUG] Pressure sensor detected")
             elif not pressure_now and self._pressure_available:
                 self._append_log("[HOT-PLUG] Pressure sensor disconnected")
+
+            # Detect flow sensor disconnect -> clear flow chart
+            if not sensor_now and self._sensor_available:
+                self._time_data.clear()
+                self._flow_data.clear()
+                self.flow_curve.setData([], [])
+                self.lbl_flow_reading.setText("Flow: -- ul/min")
+                self.lbl_temp_reading.setText("Temp: -- C")
+
+            # Detect flow sensor reconnect -> reset time reference for fresh chart
+            if sensor_now and not self._sensor_available:
+                self._time_data.clear()
+                self._flow_data.clear()
+                self.flow_curve.setData([], [])
+                self._t0 = time.monotonic()
+
+            # Detect pressure sensor disconnect -> clear pressure chart
+            if not pressure_now and self._pressure_available:
+                self._pressure_time_data.clear()
+                self._pressure_data.clear()
+                self.pressure_curve.setData([], [])
+                self.lbl_pressure_reading.setText("Pres: -- mbar")
+
+            # Detect pressure sensor reconnect -> reset for fresh chart
+            if pressure_now and not self._pressure_available:
+                self._pressure_time_data.clear()
+                self._pressure_data.clear()
+                self.pressure_curve.setData([], [])
+                if not self._time_data:
+                    self._t0 = time.monotonic()
 
             self._pump_available = pump_now
             self._sensor_available = sensor_now
@@ -1540,10 +1584,19 @@ class MainWindow(QMainWindow):
     # Data callbacks (from SignalBridge, runs on GUI thread)
     # ==================================================================
 
-    def _on_data(self, flow: float, temperature: float):
+    def _on_data(self, flow: float, temperature: float, pressure: float):
         # Feed flow data to calibration manager if active
         if self._calibrating and self._cal_manager:
             self._cal_manager.feed_flow_data(flow)
+
+        # Update pressure data if pressure sensor is available
+        if self._pressure_available and pressure != 0.0:
+            now_p = time.monotonic()
+            if self._t0 is None:
+                self._t0 = now_p
+            t_p = now_p - self._t0
+            self._pressure_time_data.append(t_p)
+            self._pressure_data.append(pressure * 1000.0)  # bar -> mbar
 
         # Skip flow data if sensor is not available
         if not self._sensor_available:
@@ -1556,9 +1609,11 @@ class MainWindow(QMainWindow):
         self._time_data.append(t)
         self._flow_data.append(flow)
 
-        # Update flow and temperature readings
+        # Update flow, temperature, and pressure readings
         self.lbl_flow_reading.setText(f"Flow: {flow:.2f} ul/min")
         self.lbl_temp_reading.setText(f"Temp: {temperature:.1f} C")
+        if pressure != 0.0:
+            self.lbl_pressure_reading.setText(f"Pres: {pressure * 1000:.2f} mbar")
 
         # Compute fluid dynamics from tube parameters
         # Q: ul/min -> m^3/s  (1 ul = 1e-9 m^3, 1 min = 60 s)
@@ -1573,16 +1628,19 @@ class MainWindow(QMainWindow):
             v_avg = Q_m3s / area                  # m/s
             v_avg_mm = v_avg * 1000.0             # mm/s
             shear_rate = 4.0 * Q_m3s / (math.pi * r_m ** 3)  # 1/s
-            shear_stress = mu_Pa_s * shear_rate   # Pa
-            shear_stress_mPa = shear_stress * 1000.0  # mPa
+            # Pressure drop: ΔP = 4μL·γ̇/D  (Hagen-Poiseuille wall shear form)
+            L_m = self.spin_tube_length.value() * 1e-2   # cm -> m
+            D_m = d_um * 1e-6                            # um -> m
+            delta_p_Pa = 4.0 * mu_Pa_s * L_m * shear_rate / D_m if D_m > 0 else 0.0
+            delta_p_mbar = delta_p_Pa / 100.0            # Pa -> mbar
 
             self.lbl_v_avg.setText(f"V_avg: {v_avg_mm:.2f} mm/s")
             self.lbl_shear_rate.setText(f"Shear rate: {shear_rate:.1f} 1/s")
-            self.lbl_shear_stress.setText(f"Shear stress: {shear_stress_mPa:.2f} mPa")
+            self.lbl_pressure_drop.setText(f"\u0394P: {delta_p_mbar:.2f} mbar")
 
         # Recording
         if self._recording:
-            self._record_buf.append((now - self._record_start, flow, temperature))
+            self._record_buf.append((now - self._record_start, flow, temperature, pressure))
             n = len(self._record_buf)
             dur = now - self._record_start
             mins, secs = divmod(int(dur), 60)
@@ -1649,6 +1707,25 @@ class MainWindow(QMainWindow):
         self._plot_paused = checked
         self.btn_plot_pause.setText("Resume Plot" if checked else "Pause Plot")
 
+    def _on_chart_manual_zoom(self):
+        """User scrolled/dragged the chart — disable auto-scroll."""
+        if self._auto_scroll:
+            self._auto_scroll = False
+            self.btn_auto_scroll.setStyleSheet(
+                "padding: 4px 12px; background: #CA5010; color: white; font-weight: bold;"
+            )
+            self.btn_auto_scroll.setText("Auto (off)")
+
+    def _on_auto_scroll_clicked(self):
+        """Re-enable auto-scroll and restore auto-range."""
+        self._auto_scroll = True
+        self.btn_auto_scroll.setStyleSheet(
+            "padding: 4px 12px; background: #107C10; color: white; font-weight: bold;"
+        )
+        self.btn_auto_scroll.setText("Auto")
+        self.flow_plot.enableAutoRange()
+        self.pressure_plot.enableAutoRange()
+
     def _on_plot_clear(self):
         """Clear all chart data and reset time reference."""
         self._time_data.clear()
@@ -1666,12 +1743,16 @@ class MainWindow(QMainWindow):
         # Flow chart: only update when sensor is available and has data
         if self._sensor_available and self._time_data:
             self.flow_curve.setData(list(self._time_data), list(self._flow_data))
+            if self._auto_scroll:
+                self.flow_plot.enableAutoRange()
 
         # Pressure chart: only update when pressure sensor is available and has data
         if self._pressure_available and self._pressure_time_data:
             self.pressure_curve.setData(
                 list(self._pressure_time_data), list(self._pressure_data)
             )
+            if self._auto_scroll:
+                self.pressure_plot.enableAutoRange()
 
     # ==================================================================
     # Status polling
@@ -1695,6 +1776,57 @@ class MainWindow(QMainWindow):
         finally:
             self._status_busy = False
 
+    def _sync_hw_from_status(self, status):
+        """Use firmware's sensor_available/pressure_available flags for fast disconnect detection."""
+        changed = False
+
+        # Flow sensor disconnect/reconnect
+        if status.sensor_available != self._sensor_available:
+            changed = True
+            if not status.sensor_available and self._sensor_available:
+                # Disconnected — clear chart immediately
+                self._time_data.clear()
+                self._flow_data.clear()
+                self.flow_curve.setData([], [])
+                self.lbl_flow_reading.setText("Flow: -- ul/min")
+                self.lbl_temp_reading.setText("Temp: -- C")
+                self._append_log("[STATUS] Flow sensor disconnected")
+            elif status.sensor_available and not self._sensor_available:
+                # Reconnected — fresh chart
+                self._time_data.clear()
+                self._flow_data.clear()
+                self.flow_curve.setData([], [])
+                self._t0 = time.monotonic()
+                self._append_log("[STATUS] Flow sensor reconnected")
+            self._sensor_available = status.sensor_available
+
+        # Pressure sensor disconnect/reconnect
+        if status.pressure_available != self._pressure_available:
+            changed = True
+            if not status.pressure_available and self._pressure_available:
+                self._pressure_time_data.clear()
+                self._pressure_data.clear()
+                self.pressure_curve.setData([], [])
+                self.lbl_pressure_reading.setText("Pres: -- mbar")
+                self._append_log("[STATUS] Pressure sensor disconnected")
+            elif status.pressure_available and not self._pressure_available:
+                self._pressure_time_data.clear()
+                self._pressure_data.clear()
+                self.pressure_curve.setData([], [])
+                if not self._time_data:
+                    self._t0 = time.monotonic()
+                self._append_log("[STATUS] Pressure sensor reconnected")
+            self._pressure_available = status.pressure_available
+
+        # Pump availability
+        if status.pump_available != self._pump_available:
+            changed = True
+            self._pump_available = status.pump_available
+
+        if changed:
+            self._update_hw_labels()
+            self._apply_hw_availability()
+
     def _update_status_display(self, status):
         self.lbl_mode.setText(f"Mode: {status.mode}")
         pump_str = "ON" if status.pump_on else "OFF"
@@ -1703,6 +1835,10 @@ class MainWindow(QMainWindow):
         self.lbl_pump_status.setStyleSheet(f"color: {color}; font-weight: bold;")
         self.lbl_flow_reading.setText(f"Flow: {status.current_flow:.2f} ul/min")
         self.lbl_temp_reading.setText(f"Temp: {status.current_temperature:.1f} C")
+        self.lbl_pressure_reading.setText(f"Pres: {status.current_pressure * 1000:.2f} mbar")
+
+        # Sync hardware availability from firmware STATUS (faster than I2C scan)
+        self._sync_hw_from_status(status)
 
         # PID elapsed
         if status.mode == "PID":
@@ -1769,7 +1905,7 @@ class MainWindow(QMainWindow):
         try:
             with open(path, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow(["time_s", "flow_ul_min", "temperature_c"])
+                writer.writerow(["time_s", "flow_ul_min", "temperature_c", "pressure_bar"])
                 writer.writerows(self._record_buf)
             self._append_log(f"Exported {len(self._record_buf)} samples to {path}")
             QMessageBox.information(self, "Export", f"Saved {len(self._record_buf)} samples.")
@@ -1803,6 +1939,8 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    init_fluent_theme()
+    apply_chart_theme()
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())

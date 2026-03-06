@@ -46,6 +46,7 @@ class SystemStatus:
     sensor_available: bool
     pressure_available: bool
     current_temperature: float
+    current_pressure: float = 0.0
     air_in_line: bool = False
     high_flow: bool = False
 
@@ -82,7 +83,7 @@ class MicrofluidicController:
         CAL <WATER|IPA>
 
     Async messages (ESP32 -> PC):
-        D <flow> <temp>             - 10Hz data stream (flow ul/min, temperature C)
+        D <flow> <temp> <pressure>  - 10Hz data stream (flow ul/min, temperature C, pressure bar)
         EVENT PID_DONE              - PID duration expired
         EVENT FLOW_ERR <tgt> <act>  - Sustained flow deviation
         EVENT AIR_IN_LINE           - Air bubble detected in flow path
@@ -104,7 +105,7 @@ class MicrofluidicController:
         self._running = False
 
         # Callbacks (user-settable)
-        self.on_data: Optional[Callable[[float, float], None]] = None  # (flow, temperature)
+        self.on_data: Optional[Callable[[float, float, float], None]] = None  # (flow, temperature, pressure)
         self.on_pid_done: Optional[Callable[[], None]] = None
         self.on_flow_err: Optional[Callable[[float, float], None]] = None
         self.on_air_in_line: Optional[Callable[[], None]] = None
@@ -315,7 +316,7 @@ class MicrofluidicController:
 
         Classification order:
           1. ESP-IDF log lines ([EWIDV] (nnn) TAG: ...) -> discard
-          2. "D " prefix   -> on_data(flow, temperature) callback
+          2. "D " prefix   -> on_data(flow, temperature, pressure) callback
           3. "EVENT ..."   -> on_pid_done / on_air_in_line / on_high_flow / on_flow_err
           4. OK/ERR/S/SCAN -> command response (wakes waiting _send_cmd_raw thread)
           5. Anything else -> discard (boot garbage, partial lines)
@@ -325,14 +326,15 @@ class MicrofluidicController:
         if _ESP_LOG_RE.match(line):
             return
 
-        # Data stream: D <flow> <temperature>
+        # Data stream: D <flow> <temperature> <pressure>
         if line.startswith("D "):
             if self.on_data:
                 try:
                     parts = line.split()
                     flow = float(parts[1])
                     temperature = float(parts[2]) if len(parts) > 2 else 0.0
-                    self.on_data(flow, temperature)
+                    pressure = float(parts[3]) if len(parts) > 3 else 0.0
+                    self.on_data(flow, temperature, pressure)
                 except (IndexError, ValueError):
                     pass
             return
@@ -392,7 +394,7 @@ class MicrofluidicController:
 
     @staticmethod
     def _parse_status(line: str) -> SystemStatus:
-        """Parse: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw> <temp> <air> <high>"""
+        """Parse: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw> <pressure_hw> <temp> <pressure> <air> <high>"""
         parts = line.split()
         if len(parts) < 9 or parts[0] != "S":
             raise CommError(f"Invalid STATUS response: {line}")
@@ -409,8 +411,9 @@ class MicrofluidicController:
             sensor_available=(parts[10] == "1") if len(parts) > 10 else True,
             pressure_available=(parts[11] == "1") if len(parts) > 11 else False,
             current_temperature=float(parts[12]) if len(parts) > 12 else 0.0,
-            air_in_line=(parts[13] == "1") if len(parts) > 13 else False,
-            high_flow=(parts[14] == "1") if len(parts) > 14 else False,
+            current_pressure=float(parts[13]) if len(parts) > 13 else 0.0,
+            air_in_line=(parts[14] == "1") if len(parts) > 14 else False,
+            high_flow=(parts[15] == "1") if len(parts) > 15 else False,
         )
 
     # ------------------------------------------------------------------
@@ -435,8 +438,8 @@ if __name__ == "__main__":
 
     port = sys.argv[1] if len(sys.argv) > 1 else "COM3"
 
-    def on_data(flow, temperature):
-        print(f"  Flow: {flow:.2f} ul/min, Temp: {temperature:.1f} C")
+    def on_data(flow, temperature, pressure):
+        print(f"  Flow: {flow:.2f} ul/min, Temp: {temperature:.1f} C, Pres: {pressure * 1000:.2f} mbar")
 
     def on_pid_done():
         print("  [EVENT] PID_DONE")
