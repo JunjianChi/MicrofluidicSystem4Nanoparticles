@@ -1,8 +1,8 @@
 /********************************************************
  * @file        serial_comm.c
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V1.0.0
- * @date        13/02/2026
+ * @version     V3.1.0
+ * @date        04/03/2026
  * @brief       Serial communication module for PC-ESP32 protocol
  *
  * @details

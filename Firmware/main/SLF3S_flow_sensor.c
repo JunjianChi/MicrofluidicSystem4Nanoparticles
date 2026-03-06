@@ -1,8 +1,8 @@
 /********************************************************
  * @file        SLF3S_flow_sensor.c
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V1.0.0
- * @date        06/02/2026
+ * @version     V3.1.0
+ * @date        04/03/2026
  * @brief       Driver implementation for Sensirion SLF3S flow sensor
  *
  * @details

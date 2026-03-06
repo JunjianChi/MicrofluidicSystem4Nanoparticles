@@ -1,8 +1,8 @@
 /********************************************************
  * @file        main.h
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V3.0.0
- * @date        13/02/2026
+ * @version     V3.1.0
+ * @date        04/03/2026
  * @brief       Main application header - shared state and command handlers
  *
  * @details
@@ -58,7 +58,7 @@ struct system_state {
     bool air_in_line;               /*!< Air bubble detected in flow path */
     bool high_flow;                 /*!< Flow rate exceeds sensor range */
 
-    /* Hardware availability (set at boot, updated by 5s hot-plug re-probe) */
+    /* Hardware availability (set at boot, updated by 2s hot-plug re-probe) */
     bool pump_available;            /*!< MCP4726 DAC at 0x61 detected */
     bool sensor_available;          /*!< SLF3S flow sensor at 0x08 detected */
     bool pressure_available;        /*!< Pressure sensor at 0x78 detected */

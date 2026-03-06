@@ -1,8 +1,8 @@
 /********************************************************
  * @file        pid_controller.c
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V1.0.0
- * @date        13/02/2026
+ * @version     V3.1.0
+ * @date        04/03/2026
  * @brief       PID closed-loop controller for flow rate control
  *
  * @details

@@ -1,8 +1,8 @@
 /********************************************************
  * @file        i2c_interface.c
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V1.0.0
- * @date        06/02/2026
+ * @version     V3.1.0
+ * @date        04/03/2026
  * @brief       I2C interface implementation
  *
  * @details

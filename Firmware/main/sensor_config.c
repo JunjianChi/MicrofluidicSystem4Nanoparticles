@@ -1,8 +1,8 @@
 /********************************************************
  * @file        sensor_config.c
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V1.0.0
- * @date        06/02/2026
+ * @version     V3.1.0
+ * @date        04/03/2026
  * @brief       Sensor and system configuration implementation
  *
  * @details

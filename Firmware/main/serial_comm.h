@@ -1,8 +1,8 @@
 /********************************************************
  * @file        serial_comm.h
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V1.0.0
- * @date        13/02/2026
+ * @version     V3.1.0
+ * @date        04/03/2026
  * @brief       Serial communication module for PC-ESP32 protocol
  *
  * @details
@@ -96,7 +96,9 @@ void serial_comm_send_err(const char *reason);
 void serial_comm_send_data(float flow, float temperature, float pressure);
 
 /**
- * @brief Send status response: S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration> <pump_hw> <sensor_hw>
+ * @brief Send 15-field status response:
+ *        S <mode> <pump> <amp> <freq> <flow> <target> <elapsed> <duration>
+ *          <pump_hw> <sensor_hw> <pressure_hw> <temp> <pressure> <air> <high_flow>
  */
 void serial_comm_send_status(const system_state_t *state);
 

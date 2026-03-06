@@ -1,8 +1,8 @@
 /********************************************************
  * @file        main.c
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V3.0.0
- * @date        13/02/2026
+ * @version     V3.1.0
+ * @date        04/03/2026
  * @brief       Main application - FreeRTOS multi-task microfluidic control
  *
  * @details

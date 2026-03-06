@@ -1,7 +1,7 @@
 /********************************************************
  * @file        abp_pressure_sensor.c
  * @author      Junjian Chi (jc2592@cam.ac.uk)
- * @version     V1.0.0
+ * @version     V3.1.0
  * @date        04/03/2026
  * @brief       Driver for Honeywell ABP pressure sensor (ABPMANV015PG7A5)
  *
