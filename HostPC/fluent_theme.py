@@ -275,7 +275,11 @@ def init_fluent_theme() -> None:
     if not app:
         return
 
-    app.setFont(QFont("Segoe UI", 9))
+    import sys
+    if sys.platform == "darwin":
+        app.setFont(QFont("SF Pro Display", 9))
+    else:
+        app.setFont(QFont("Segoe UI", 9))
 
     pal = app.palette()
     pal.setColor(QPalette.Window,          QColor(BG_WINDOW))

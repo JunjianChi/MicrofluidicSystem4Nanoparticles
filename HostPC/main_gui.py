@@ -678,8 +678,10 @@ class MainWindow(QMainWindow):
         self.btn_plot_pause.toggled.connect(self._on_plot_pause_toggled)
         self.btn_plot_clear.clicked.connect(self._on_plot_clear)
         self.btn_auto_scroll.clicked.connect(self._on_auto_scroll_clicked)
-        self.flow_plot.sigRangeChangedManually.connect(self._on_chart_manual_zoom)
-        self.pressure_plot.sigRangeChangedManually.connect(self._on_chart_manual_zoom)
+        if hasattr(self.flow_plot, 'sigRangeChangedManually'):
+            self.flow_plot.sigRangeChangedManually.connect(self._on_chart_manual_zoom)
+        if hasattr(self.pressure_plot, 'sigRangeChangedManually'):
+            self.pressure_plot.sigRangeChangedManually.connect(self._on_chart_manual_zoom)
 
         # Alerts
         self.btn_dismiss_alert.clicked.connect(self._dismiss_alert)
