@@ -9,7 +9,9 @@ An ESP32-based closed-loop microfluidic control system that mimics blood circula
 </p>
 
 <p align="center">
-  <a href="docs/Video%20Project%201.mp4">▶ Watch Demo Video</a>
+  <img src="docs/demo.gif" alt="PID Control Demo" width="720">
+  <br>
+  <em>Demo: PID closed-loop flow control at 200 µl/min setpoint</em>
 </p>
 
 ---
