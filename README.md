@@ -4,26 +4,13 @@
 
 An ESP32-based closed-loop microfluidic control system that mimics blood circulation for organ-on-chip and lab-on-chip applications. The system drives a Bartels MP6 piezoelectric micropump, measures real-time liquid flow with a Sensirion SLF3S sensor, and closes the loop with a PID controller -- all at 10 Hz. A Python GUI on the host PC provides manual pump control, PID mode, live charting, data recording with CSV export, and hardware hot-plug detection.
 
-```
-                          UART 115200 8N1
-  ┌───────────────────┐ ◄──────────────────► ┌───────────────────────────────┐
-  │   Host PC (GUI)   │                      │          ESP32 MCU            │
-  │  main_gui.py      │                      │                               │
-  │  microfluidic_api  │                      │  serial_cmd_task (pri 5)      │
-  └───────────────────┘                      │  sensor_read_task (pri 6)     │
-                                             │         │            │        │
-                                             │    GPIO │ PWM   I2C  │        │
-                                             └─────┼───┼────────────┼────────┘
-                                                   │   │            │
-                                             ┌─────┘   │   ┌───────┘
-                                             ▼         ▼   ▼
-                                          ┌────────┐ ┌──────────┐ ┌──────────┐
-                                          │MCP4726 │ │  SLF3S   │ │ABP Press │
-                                          │DAC 0x61│ │Flow 0x08 │ │  0x78    │
-                                          └────────┘ └──────────┘ └──────────┘
-                                            MP6 Pump
-                                         (Enable+Clock)
-```
+<p align="center">
+  <img src="docs/demo.png" alt="System Overview" width="720">
+</p>
+
+<p align="center">
+  <a href="docs/Video%20Project%202.mp4">▶ Watch Demo Video</a>
+</p>
 
 ---
 
@@ -539,27 +526,9 @@ For the full protocol specification (STATUS field details, error codes, etc.), s
 
 ## 8. Software Architecture
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Host PC: main_gui.py (PyQt5) + microfluidic_api.py │  GUI + API
-├──────────────────────────────────────────────────────┤
-│              UART Protocol (ASCII, \n)               │  Communication
-├──────────────────────────────────────────────────────┤
-│         Application Layer (main.c)                   │  FreeRTOS tasks,
-│  serial_cmd_task (pri 5) | sensor_read_task (pri 6)  │  command dispatch
-├──────────────────────────────────────────────────────┤
-│  pid_controller        │  serial_comm                │  PID control,
-│                        │                             │  protocol parsing
-├──────────────────────────────────────────────────────┤
-│  SLF3S_flow_sensor  │  mp6_driver  │  mcp4726_dac   │  Device drivers
-├──────────────────────────────────────────────────────┤
-│              i2c_interface                            │  I2C HAL
-├──────────────────────────────────────────────────────┤
-│          sensor_config (Kconfig)                     │  Pin & sensor config
-├──────────────────────────────────────────────────────┤
-│            ESP-IDF / FreeRTOS                        │  Platform
-└──────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/hardware.png" alt="System Architecture" width="720">
+</p>
 
 ### FreeRTOS Tasks
 
