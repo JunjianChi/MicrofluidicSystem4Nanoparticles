@@ -379,8 +379,16 @@ The firmware will:
 
 **Option A: Run from source (recommended for development)**
 
+Requires **Python 3.13+** (`python --version` to check).
+
 ```bash
 cd HostPC
+
+# Create and activate a virtual environment
+python -m venv venv
+source venv/bin/activate        # macOS / Linux
+# venv\Scripts\activate         # Windows
+
 pip install -r requirements.txt
 python main_gui.py
 ```

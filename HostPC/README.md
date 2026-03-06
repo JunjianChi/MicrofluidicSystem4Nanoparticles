@@ -27,13 +27,29 @@ This document covers every feature of the Host PC graphical user interface for t
 
 ## 1. Installation
 
+### Prerequisites
+
+- **Python 3.13+** (check with `python --version` or `python3 --version`)
+- **USB-to-serial driver** for your ESP32 board:
+  - **CP2102** (Silicon Labs): [download](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
+  - **CH340** (WCH): [download](http://www.wch-ic.com/downloads/CH341SER_EXE.html)
+
 ### Option A: Run from Source (Recommended)
 
 ```bash
 cd HostPC
+
+# Create and activate a virtual environment
+python -m venv venv
+source venv/bin/activate        # macOS / Linux
+# venv\Scripts\activate         # Windows
+
+# Install dependencies and launch
 pip install -r requirements.txt
 python main_gui.py
 ```
+
+> **Tip:** Always activate the virtual environment (`source venv/bin/activate`) before running the GUI in a new terminal session.
 
 **Dependencies** (`requirements.txt`):
 ```
@@ -44,7 +60,7 @@ pyserial>=3.5
 
 ### Option B: Standalone Executable
 
-Build with PyInstaller:
+Build with PyInstaller (no Python needed on the target machine):
 
 ```bash
 cd HostPC
@@ -52,11 +68,21 @@ pip install pyinstaller
 pyinstaller --onefile --windowed --name MicrofluidicGUI main_gui.py
 ```
 
-The executable is created at `dist/MicrofluidicGUI.exe`. No Python installation is needed on the target machine.
+| Platform | Output path |
+|----------|-------------|
+| Windows  | `dist/MicrofluidicGUI.exe` |
+| macOS    | `dist/MicrofluidicGUI` (Unix executable) |
+| Linux    | `dist/MicrofluidicGUI` (Unix executable) |
 
-**USB driver prerequisite:** The target machine must have the correct USB-to-serial driver installed for the ESP32 board:
-- **CP2102** (Silicon Labs): [download](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
-- **CH340** (WCH): [download](http://www.wch-ic.com/downloads/CH341SER_EXE.html)
+### Serial Port Names by Platform
+
+| Platform | Typical port name | Where to check |
+|----------|------------------|----------------|
+| Windows  | `COM3`, `COM4`, ... | Device Manager > Ports (COM & LPT) |
+| macOS    | `/dev/cu.usbserial-xxxx` or `/dev/cu.SLAB_USBtoUART` | `ls /dev/cu.*` in Terminal |
+| Linux    | `/dev/ttyUSB0` or `/dev/ttyACM0` | `ls /dev/tty*` in Terminal |
+
+> **Linux note:** You may need to add your user to the `dialout` group for serial port access: `sudo usermod -aG dialout $USER` (log out and back in to apply).
 
 ---
 
