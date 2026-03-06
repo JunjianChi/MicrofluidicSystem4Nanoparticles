@@ -9,7 +9,7 @@ An ESP32-based closed-loop microfluidic control system that mimics blood circula
 </p>
 
 <p align="center">
-  <a href="docs/Video%20Project%202.mp4">▶ Watch Demo Video</a>
+  <a href="docs/Video%20Project%201.mp4">▶ Watch Demo Video</a>
 </p>
 
 ---
