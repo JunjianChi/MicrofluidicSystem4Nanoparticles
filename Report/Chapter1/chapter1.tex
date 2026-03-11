@@ -1,0 +1,75 @@
+%!TEX root = ../thesis.tex
+%*******************************************************************************
+%****************************** Introduction ***********************************
+%*******************************************************************************
+
+\chapter{Introduction}
+
+\ifpdf
+    \graphicspath{{Chapter1/Figs/Raster/}{Chapter1/Figs/PDF/}{Chapter1/Figs/}}
+\else
+    \graphicspath{{Chapter1/Figs/Vector/}{Chapter1/Figs/}}
+\fi
+
+%********************************** Section 1.1 ********************************
+\section{Nanocarrier Drug Delivery}
+
+Nanoparticles (NPs) have been engineered as carriers to deliver
+therapeutic agents selectively to diseased tissues, offering a
+strategy to improve drug efficacy while reducing off-target
+toxicity \citep{Yusuf2023, Mitchell2021}.
+NPs typically range from 70 to \SI{500}{\nano\metre} and can be
+tailored in size, shape, and surface chemistry to enhance
+selective uptake at tumour sites \citep{Yusuf2023}.
+This targeted approach is particularly relevant for cancers
+with poor prognosis, such as pancreatic cancer, where the
+five-year survival rate remains approximately 8.3\%
+\citep{Sung2021}.
+
+However, clinical translation of nanocarrier-based drug delivery
+remains limited.
+During blood circulation, NPs are exposed to haemodynamic
+shear stresses that can promote aggregation through increased
+inter-particle collisions, progressively enlarging the effective
+particle size \citep{Lv2016, Shrestha2020}.
+Shear forces also induce structural perturbations in
+lipid-based nanocarriers, including deformation and interfacial
+rearrangement, which lead to gradual loss of encapsulation
+stability and premature drug leakage \citep{Karaz2023, Wang2021}.
+These effects are inherently dynamic and accumulative,
+depending on shear conditions, particle properties, and
+circulation time \citep{Shrestha2020}.
+
+Despite these well-characterised phenomena, the majority of
+preclinical NP assessment is still conducted under static
+in vitro conditions, which cannot capture the flow-dependent
+instabilities that govern NP behaviour in vivo.
+This disconnect between bench-side testing and physiological
+reality contributes to the high attrition rate of nanomedicine
+candidates in clinical trials.
+
+%********************************** Section 1.2 ********************************
+\section{Need for Biomimetic Flow Testing Platforms}
+
+To bridge this gap, microfluidic recirculation systems have emerged as tools capable of reproducing physiologically relevant flow conditions for NP testing in vitro \citep{Whitesides2006, Bhatia2014}. Such platforms enable researchers to study NP stability, adhesion, and drug release under controlled shear stress, providing more predictive preclinical data.
+
+Previous work in this research group developed an initial recirculation device, termed ``Artery in a Box'', which demonstrated the feasibility of in vitro biomimetic flow experiments for NP characterisation \citep{Kacerik2024}. However, this first-generation prototype relied on manual flow adjustment without feedback control, limiting its ability to maintain stable, reproducible flow conditions over extended experimental durations. Commercial alternatives such as syringe pump systems, while offering precise flow control, are bulky, expensive, and fundamentally unsuited to continuous recirculation due to their finite reservoir volume.
+
+There is therefore a clear need for a \textbf{compact, low-cost, automated recirculation platform with closed-loop flow control} that can maintain physiologically relevant shear conditions for sustained periods while providing real-time monitoring and data acquisition capabilities.
+
+%********************************** Section 1.3 ********************************
+\section{Objectives}
+
+This project aims to design, build, and characterise an ESP32-based closed-loop microfluidic recirculation system for biomimetic flow studies. The specific objectives are:
+
+\begin{enumerate}
+    \item Design and implement a hardware platform integrating a Bartels MP6 piezoelectric micropump, Sensirion SLF3S liquid flow sensor, and associated drive electronics controlled by an ESP32 microcontroller.
+    \item Develop a closed-loop PID control algorithm running under FreeRTOS to achieve stable, programmable flow rate regulation at \SI{10}{\hertz} sampling rate.
+    \item Create a Python-based graphical user interface (GUI) providing real-time flow monitoring, shear rate computation, and experimental data recording.
+    \item Characterise the system performance in terms of flow accuracy, dynamic response, and long-term stability under conditions relevant to NP recirculation experiments.
+\end{enumerate}
+
+%********************************** Section 1.4 ********************************
+\section{Report Structure}
+
+The remainder of this report is organised as follows. Chapter~\ref{ch:methods} describes the materials and methods, including the system architecture, hardware components, control algorithm, and software platform. Chapter~\ref{ch:results} presents the experimental results and discusses the system performance, limitations, and directions for future work.
