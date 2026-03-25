@@ -1147,7 +1147,6 @@ class MainWindow(QMainWindow):
         self.lbl_pump_feedback.setStyleSheet("color: orange; font-weight: bold;")
         amp = self.spin_amp.value()
         freq = self.spin_freq.value()
-        self._append_log(f"[PUMP] ON  AMP={amp}  FREQ={freq}")
         self._bg_cmd_seq("pump_on", [
             (self._ctrl.set_amplitude, amp),
             (self._ctrl.set_frequency, freq),
@@ -1160,7 +1159,6 @@ class MainWindow(QMainWindow):
         self.btn_pump_off.setEnabled(False)
         self.lbl_pump_feedback.setText("Pump: stopping...")
         self.lbl_pump_feedback.setStyleSheet("color: orange; font-weight: bold;")
-        self._append_log("[PUMP] OFF")
         self._bg_cmd_seq("pump_off", [(self._ctrl.pump_off,)])
 
     def _on_amp_changed(self, _value):
@@ -1177,14 +1175,12 @@ class MainWindow(QMainWindow):
         if not self._ctrl or not self._ctrl.is_connected:
             return
         val = self.spin_amp.value()
-        self._append_log(f"[PUMP] AMP -> {val}")
         threading.Thread(target=self._bg_cmd, args=(self._ctrl.set_amplitude, val), daemon=True).start()
 
     def _cmd_set_frequency(self):
         if not self._ctrl or not self._ctrl.is_connected:
             return
         val = self.spin_freq.value()
-        self._append_log(f"[PUMP] FREQ -> {val}")
         threading.Thread(target=self._bg_cmd, args=(self._ctrl.set_frequency, val), daemon=True).start()
 
     def _on_pid_gains_changed(self, _value):
@@ -1846,8 +1842,11 @@ class MainWindow(QMainWindow):
         # Sync hardware availability from firmware STATUS (faster than I2C scan)
         self._sync_hw_from_status(status)
 
-        # PID elapsed
+        # PID elapsed + amplitude logging
         if status.mode == "PID":
+            self._append_log(
+                f"[PID] AMP={status.amplitude}  flow={status.current_flow:.1f}  "
+                f"target={status.pid_target:.1f}")
             if status.pid_duration_s > 0:
                 self.lbl_pid_elapsed.setText(
                     f"Elapsed: {status.pid_elapsed_s}/{status.pid_duration_s}s"
