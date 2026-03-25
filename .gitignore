@@ -18,5 +18,11 @@ __pycache__/
 # Report (LaTeX)
 Report/
 
-# Host PC
-HostPC/
+# Host PC - ignore everything except GUI and its dependencies
+HostPC/*
+!HostPC/main_gui.py
+!HostPC/microfluidic_api.py
+!HostPC/tube_calibration.py
+!HostPC/fluent_theme.py
+!HostPC/requirements.txt
+!HostPC/README.md
