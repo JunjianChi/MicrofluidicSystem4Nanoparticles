@@ -14,3 +14,9 @@ sdkconfig.old
 .DS_Store
 Thumbs.db
 __pycache__/
+
+# Report (LaTeX)
+Report/
+
+# Host PC
+HostPC/
